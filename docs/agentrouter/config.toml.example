@@ -1,0 +1,18 @@
+# User-level Codex CLI configuration: copy/merge into ~/.codex/config.toml.
+# Provider settings do not belong in a project-local .codex/config.toml.
+model = "deepseek-v4-flash"
+model_provider = "AgentRouter"
+
+[model_providers.AgentRouter]
+base_url = "https://agentrouter.org/v1"
+env_key = "CODEX_GATEWAY_API_KEY"
+name = "AgentRouter"
+wire_api = "responses"
+
+# Model name reference. Codex CLI does not support this models subtable;
+# leave it commented. Select an ID with --config model='"model-id"'.
+# [model_providers.AgentRouter.models]
+# deepseek-v4-flash = { name = "DeepSeek V4 Flash" }
+# "gpt-6-astra" = { name = "GPT-6 Astra" }
+# "claude-opus-5" = { name = "Claude Opus 5" }
+# "claude-opus-4-8" = { name = "Claude Opus 4.8" }
