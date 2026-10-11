@@ -1,5 +1,11 @@
 # Тендер-Сверка
 
+Полная версия разрабатывается в ветке `codex/full-version`; сохранённый MVP —
+ветка `main`, тег `mvp-baseline`. [Порядок реализации](docs/full-version/task-plan.md),
+[среда разработки](docs/full-version/development.md) и
+[состояние требований и приёмки](docs/full-version/implementation-status.md).
+Новые модули пока не заменяют весь сценарий MVP. Инструкции ниже относятся к MVP.
+
 Локальный MVP: документация → редактируемый чек-лист → 1–3 заявки → матрица с цитатами → XLSX.
 
 FastAPI + SQLite + OpenAI-совместимый API с Pydantic-валидацией, Next.js + Tailwind + shadcn/ui. Авторизация — заглушка demo. Очередей, миграций и отдельных worker нет.

@@ -1,0 +1,67 @@
+name: tender-sverka-dev
+
+# Local integration infrastructure. A single-node stack is not an HA deployment.
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: tender_sverka
+      POSTGRES_USER: tender_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate infrastructure/.env first}
+      TENDER_APPLICATION_PASSWORD: ${TENDER_APPLICATION_PASSWORD:?Generate infrastructure/.env first}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/00-app-role.sh:/docker-entrypoint-initdb.d/00-app-role.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tender_owner -d tender_sverka"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: tender
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Generate infrastructure/.env first}
+      RABBITMQ_DEFAULT_VHOST: tender
+    ports: ["127.0.0.1:5673:5672", "127.0.0.1:15673:15672"]
+    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Generate infrastructure/.env first}", "--appendonly", "yes"]
+    ports: ["127.0.0.1:56379:6379"]
+    volumes: ["redis-data:/data"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  storage:
+    image: dxflrs/garage:v2.4.1
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY:?Generate infrastructure/.env first}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY:?Generate infrastructure/.env first}
+      GARAGE_DEFAULT_BUCKET: tender-documents
+    ports: ["127.0.0.1:53900:3900"]
+    volumes:
+      - ./garage.local.toml:/etc/garage.toml:ro
+      - storage-meta:/var/lib/garage/meta
+      - storage-data:/var/lib/garage/data
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  redis-data:
+  storage-meta:
+  storage-data:
