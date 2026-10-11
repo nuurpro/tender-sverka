@@ -1,0 +1,1 @@
+"""Authenticated workspace HTTP boundary."""

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     database_url: SecretStr = Field(validation_alias=AliasChoices("DATABASE_URL", "database_url"))
     session_secret: SecretStr
     public_origin: str = "http://localhost:3000"
+    sms_endpoint: str | None = None
+    sms_token: SecretStr | None = None
     broker_url: SecretStr | None = Field(default=None, validation_alias=AliasChoices("CELERY_BROKER_URL", "broker_url"))
     redis_url: SecretStr | None = Field(default=None, validation_alias=AliasChoices("REDIS_URL", "redis_url"))
     gateway_api_base: str = "https://agentrouter.org/v1"
@@ -43,6 +45,16 @@ class Settings(BaseSettings):
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError("gateway URL requires HTTPS and must not contain credentials, query or fragment")
         return value.rstrip("/")
+
+    @field_validator("sms_endpoint")
+    @classmethod
+    def validate_sms_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = urlsplit(value)
+        if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+            raise ValueError("SMS endpoint requires HTTPS without credentials, query or fragment")
+        return value
 
     @field_validator("public_origin")
     @classmethod
@@ -69,4 +81,6 @@ class Settings(BaseSettings):
                 raise ValueError("production public origin requires HTTPS")
             if not database.username or database.username.lower() in {"postgres", "root"}:
                 raise ValueError("production requires a restricted application role, not a database administrator")
+        elif urlsplit(self.public_origin).scheme == "http" and urlsplit(self.public_origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("HTTP development origins must use a loopback hostname")
         return self

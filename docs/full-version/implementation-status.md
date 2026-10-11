@@ -118,3 +118,10 @@ evidence, not a smaller definition of completion.
   downstream application integration is still pending.
 - Added explicit local `migrate`/`verify` commands; migration credentials never
   overwrite the saved runtime configuration and errors do not echo credentials.
+- Saved a development checkpoint for phone authentication, organization roles,
+  project/checklist APIs, migration `0004_phone_auth`, and the separate
+  `/workspace` frontend. This is work in progress; independent review, real SMS
+  provider acceptance and the remaining full-version requirements are pending.
+  Backend tests: 144 passed against the local PostgreSQL setup. Frontend API
+  tests: 6 passed; TypeScript check passed. The MVP baseline remains
+  on `main` and is retained by the `mvp-baseline` tag.

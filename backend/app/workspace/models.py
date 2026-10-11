@@ -57,10 +57,37 @@ class Organization(Base):
 
 class User(Base):
     __tablename__ = "users"
-    email: Mapped[str] = mapped_column(String(320), unique=True)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
+    phone: Mapped[str | None] = mapped_column(String(16), unique=True)
     password_hash: Mapped[str | None] = mapped_column(Text)
     display_name: Mapped[str | None] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class OtpChallenge(Base):
+    __tablename__ = "otp_challenges"
+    __table_args__ = (CheckConstraint("attempts BETWEEN 0 AND 5"), Index("ix_otp_phone", "phone"))
+    phone: Mapped[str] = mapped_column(String(16))
+    code_digest: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AuthBudget(Base):
+    __tablename__ = "auth_budgets"
+    key: Mapped[str] = mapped_column(String(128), unique=True)
+    events: Mapped[list] = mapped_column(JSON_VALUE, default=list)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    verifier: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Membership(Tenant, Base):
