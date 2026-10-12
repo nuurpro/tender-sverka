@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCheck, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WorkspaceApi, WorkspaceApiError } from "@/lib/workspace-api";
@@ -21,7 +21,7 @@ export function WorkspaceRoot() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api]);
-  function expired() { setSession(null); setError("Сессия закончилась. Войдите снова."); }
+  const expired = useCallback(() => { setSession(null); setError("Сессия закончилась. Войдите снова."); }, []);
   async function logout() {
     setLoggingOut(true); setError("");
     try { await api.logout(); setSession(null); }
@@ -35,6 +35,7 @@ export function WorkspaceRoot() {
   return <div className="min-h-[100dvh]">
     <header className="border-b bg-white"><div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-8"><a href="/workspace" className="flex items-center gap-3 text-lg font-semibold tracking-tight"><CheckCheck className="size-6 text-primary" />Тендер-Сверка</a><div className="flex items-center gap-3"><span className="text-sm text-[#56645b]">{session.user.display_name || session.user.phone}</span><Button variant="ghost" size="sm" onClick={logout} disabled={loggingOut}>{loggingOut ? <Loader2 className="animate-spin" /> : <LogOut />}Выйти</Button></div></div></header>
     {error && <div role="alert" className="mx-auto mt-5 max-w-7xl rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-800">{error}</div>}
-    <WorkspaceDashboard api={api} session={session} onExpired={expired} onOrganizations={organizations => setSession({ ...session, organizations })} />
+    <WorkspaceDashboard api={api} session={session} onExpired={expired} onOrganizations={organizations => setSession(current =>
+      current?.csrf_token === session.csrf_token ? { ...current, organizations } : current)} />
   </div>;
 }

@@ -23,6 +23,7 @@ class AuthService:
     def __init__(self, engine, settings, sender, clock):
         self.engine, self.settings, self.sender, self.clock = engine, settings, sender, clock
         self.secret = settings.session_secret.get_secret_value().encode()
+        self.development_mock = settings.sms_provider == "mock" and settings.environment in {"development", "test"}
 
     def mac(self, value):
         return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
@@ -36,7 +37,8 @@ class AuthService:
 
     def request_code(self, phone, ip):
         now = self.clock()
-        challenge_id, code = str(uuid4()), f"{secrets.randbelow(1_000_000):06d}"
+        challenge_id = str(uuid4())
+        code = "123456" if self.development_mock else f"{secrets.randbelow(1_000_000):06d}"
         with Session(self.engine) as db, db.begin():
             budgets = []
             # Stable lock order, durable upserts: concurrent processes share quotas.
@@ -60,7 +62,10 @@ class AuthService:
             raise HTTPException(503, "Не удалось отправить SMS. Повторите позже.") from None
         with Session(self.engine) as db, db.begin():
             db.execute(update(OtpChallenge).where(OtpChallenge.id == challenge_id, OtpChallenge.consumed.is_(False)).values(delivered=True))
-        return {"challenge_id": challenge_id, "expires_in": 300}
+        result = {"challenge_id": challenge_id, "expires_in": 300}
+        if self.development_mock:
+            result["delivery_mode"] = "development_mock"
+        return result
 
     def verify(self, challenge_id, code):
         now, raw = self.clock(), secrets.token_urlsafe(32)

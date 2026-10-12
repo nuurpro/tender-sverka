@@ -12,6 +12,30 @@ class SmsUnavailable(Exception):
     pass
 
 
+class MockSmsProvider:
+    """Explicit development-only provider: no transport and no plaintext logs."""
+    def __init__(self, environment):
+        if environment not in {"development", "test"}:
+            raise ValueError("Mock SMS requires a development or test environment")
+
+    def send(self, phone, code):
+        pass
+
+
+class UnconfiguredEskizSmsProvider:
+    """Future provider boundary; connecting to Eskiz is not implemented."""
+    def send(self, phone, code):
+        raise SmsUnavailable("SMS-провайдер Eskiz пока не подключён. Обратитесь к администратору.")
+
+
+def configured_sender(settings):
+    if settings.sms_provider == "mock":
+        return MockSmsProvider(settings.environment)
+    if settings.sms_provider == "eskiz":
+        return UnconfiguredEskizSmsProvider()
+    return HttpSmsSender(settings.sms_endpoint, settings.sms_token)
+
+
 class HttpSmsSender:
     def __init__(self, endpoint, token, *, transport=None):
         self.endpoint = endpoint

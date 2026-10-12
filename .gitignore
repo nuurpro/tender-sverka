@@ -13,3 +13,4 @@ frontend/.next/
 *.sqlite3-shm
 *.sqlite3-wal
 infrastructure/garage.local.toml
+infrastructure/rabbitmq.local.conf

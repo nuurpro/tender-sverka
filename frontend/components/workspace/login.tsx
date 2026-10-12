@@ -11,6 +11,7 @@ export function WorkspaceLogin({ api, onLogin, initialError = "" }: { api: Works
   const [phone, setPhone] = useState("+998");
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<string | null>(null);
+  const [developmentMock, setDevelopmentMock] = useState(false);
   const [resendAt, setResendAt] = useState(0);
   const [expiresAt, setExpiresAt] = useState(0);
   const [now, setNow] = useState(() => Date.now());
@@ -28,6 +29,7 @@ export function WorkspaceLogin({ api, onLogin, initialError = "" }: { api: Works
     setBusy(true); setError("");
     try {
       const result = await api.requestCode(phone);
+      setDevelopmentMock(result.delivery_mode === "development_mock");
       const current = Date.now();
       setChallenge(result.challenge_id); setCode(""); setNow(current);
       setResendAt(current + 60_000); setExpiresAt(current + result.expires_in * 1000);
@@ -52,7 +54,8 @@ export function WorkspaceLogin({ api, onLogin, initialError = "" }: { api: Works
     </div>
     <section aria-labelledby="login-title" className="surface p-7 sm:p-10">
       <h2 id="login-title" className="text-2xl font-semibold tracking-tight">{challenge ? "Подтвердите номер" : "Вход в рабочую область"}</h2>
-      <p className="mt-3 text-sm leading-6 text-[#56645b]">{challenge ? `Код отправлен на ${phone}. Он действует 5 минут.` : "Введите номер телефона. Мы отправим одноразовый код для входа."}</p>
+      <p className="mt-3 text-sm leading-6 text-[#56645b]">{challenge ? developmentMock ? `Тестовый вход для ${phone}. Код действует 5 минут.` : `Код отправлен на ${phone}. Он действует 5 минут.` : "Введите номер телефона, чтобы получить код для входа."}</p>
+      {challenge && developmentMock && <p role="note" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Dev-режим: код 123456. SMS не отправляется.</p>}
       <form onSubmit={submit} className="mt-8 space-y-5">
         {challenge ? <div><label htmlFor="login-code" className="mb-2 block text-sm font-medium">Код из SMS</label><Input id="login-code" type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus pattern="[0-9]{6}" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/[^0-9]/g, ""))} disabled={busy || expired} required className="h-12 text-center text-xl tracking-[0.35em]" placeholder="000000" /></div>
           : <div><label htmlFor="login-phone" className="mb-2 block text-sm font-medium">Номер телефона</label><Input id="login-phone" type="tel" autoComplete="tel" autoFocus maxLength={32} value={phone} onChange={event => setPhone(event.target.value)} required disabled={busy} className="h-12 text-base" placeholder="+998 90 123 45 67" /><p className="mt-2 text-xs text-[#56645b]">Международный формат с кодом страны</p></div>}

@@ -147,3 +147,32 @@ def test_postgres_concurrent_admin_demotion_preserves_last_admin(pg_api):
     assert sorted(statuses) == [200, 409]
     with tenant_transaction(runtime, org) as db:
         assert db.scalar(select(func.count()).select_from(Membership).where(Membership.organization_id == org, Membership.role == "admin")) == 1
+
+
+def test_development_default_factory_mock_auth_uses_no_http_or_injection(pg_api, monkeypatch, caplog):
+    import httpx
+    from app.config import Settings
+    from app.full_main import create_app
+    from app.workspace.models import OtpChallenge
+    _, runtime, *_ = pg_api
+    caplog.set_level("DEBUG")
+    settings = Settings(environment="development", database_url=os.environ["WORKSPACE_TEST_RUNTIME_DATABASE_URL"],
+        session_secret="x" * 48, public_origin=ORIGIN, sms_provider="mock")
+    transport_calls = []
+    def never_http(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        raise AssertionError("Development mock cannot connect to SMS")
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", never_http)
+    app = create_app(settings)  # Real restricted PostgreSQL, default sender, real clock.
+    with TestClient(app, client=("development-mock-" + str(uuid4()), 50000)) as client:
+        requested = client.post("/api/auth/request", json={"phone": new_phone()}, headers={"Origin": ORIGIN})
+        assert requested.status_code == 200, requested.text
+        assert requested.json()["delivery_mode"] == "development_mock"
+        payload = {"challenge_id": requested.json()["challenge_id"], "code": "000000"}
+        assert client.post("/api/auth/verify", json=payload, headers={"Origin": ORIGIN}).status_code == 401
+        payload["code"] = "123456"
+        assert client.post("/api/auth/verify", json=payload, headers={"Origin": ORIGIN}).status_code == 200
+    with Session(runtime) as db:
+        challenge = db.get(OtpChallenge, requested.json()["challenge_id"])
+        assert challenge.delivered and challenge.code_digest != "123456"
+    assert transport_calls == [] and "123456" not in caplog.text

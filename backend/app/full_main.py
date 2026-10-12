@@ -1,4 +1,4 @@
-"""Full authenticated application. Start with uvicorn app.full_main:create_app --factory."""
+"""Full authenticated application. Start with uvicorn app.full_main:create_app --factory --no-proxy-headers."""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth.routes import router as auth_router
 from app.auth.service import AuthService
-from app.auth.sms import HttpSmsSender, SmsSenderProtocol
+from app.auth.sms import SmsSenderProtocol, configured_sender
 from app.config import Settings
 from app.workspace.database import create_engine, verify_runtime_database
 from app.workspace.models import utcnow
@@ -36,7 +36,7 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     app.state.cookie_secure = settings.public_origin.startswith("https://")
     app.state.cookie_name = "__Host-tender_session" if app.state.cookie_secure else "tender_session"
     app.state.auth = AuthService(engine, settings,
-        sms_sender or HttpSmsSender(settings.sms_endpoint, settings.sms_token), clock)
+        sms_sender if sms_sender is not None else configured_sender(settings), clock)
     app.add_middleware(CORSMiddleware, allow_origins=[settings.public_origin],
         allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-CSRF-Token"])

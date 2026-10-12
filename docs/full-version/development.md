@@ -48,7 +48,67 @@ native PostgreSQL or the Compose PostgreSQL service at a time. PostgreSQL 14
 validates repository/RLS/trigger behavior locally; the planned PostgreSQL 18
 deployment must still be verified on its actual image.
 
-## Persistence checks
+## Authenticated workspace during development
+
+The full API is a separate process. After applying migrations, run from the
+checkout root with the backend Python environment activated:
+
+```powershell
+python scripts/dev_services.py api --port 8100 --origin http://127.0.0.1:3001
+```
+
+In a second terminal, from `frontend/`:
+
+```powershell
+npm ci
+npm run dev -- --port 3001
+```
+
+Open `http://127.0.0.1:3001/workspace`. Next.js proxies `/api/` to
+`FULL_BACKEND_URL` (default `http://127.0.0.1:8100`); set this server-side variable
+before launching Next.js if the API port changes. The API's `APP_PUBLIC_ORIGIN`
+must exactly match the browser origin, including hostname and port. The local
+helper uses only runtime credentials from ignored `infrastructure/.env` and
+does not pass migration/admin credentials into the API process. Production must
+use its own service launcher and HTTPS settings, not this loopback helper.
+All supported Uvicorn launches must use `--no-proxy-headers`: a default Uvicorn
+launch trusts loopback forwarded headers and would undermine the IP login quota.
+With the Next.js proxy, the default IP quota conservatively applies to the proxy's
+socket address; deployment-specific trusted proxy handling requires an explicit
+policy and separate verification before enabling it.
+
+The local helper and development template select `APP_SMS_PROVIDER=mock`:
+`MockSmsProvider` uses the fixed code **123456**, sends no SMS, and the challenge
+screen explicitly labels this development mode. Production rejects this provider.
+This development choice follows the user's instruction; it does not establish
+production phone identity or SMS delivery acceptance.
+
+For a real provider, select `APP_SMS_PROVIDER=http` and configure
+`APP_SMS_ENDPOINT` and `APP_SMS_TOKEN` in the ignored local configuration. The
+vendor-neutral HTTPS adapter posts `{phone,message}`
+JSON with a Bearer token, refuses redirects, and times out after ten seconds.
+Its endpoint must return 2xx only when delivery was accepted; provider-specific
+response validation belongs in that provider's adapter. Missing settings return
+a clear refusal. Test senders can only be
+injected into an app explicitly configured as `environment=test`; they do not
+establish real SMS delivery acceptance. The future Uzbekistan provider is Eskiz,
+whose API is `https://notify.eskiz.uz/api/`. It is not connected in this development
+version; provider-specific authentication and delivery semantics remain a later
+integration gate. Platform OIDC is still pending.
+
+Use Node.js 24+ for `npm test` (native TypeScript loading), and `npm run check`
+for TypeScript verification. The `/` route remains the preserved MVP. The
+workspace currently covers login, organizations and project metadata; document
+processing, full comparison and the other ledger items are still in progress.
+
+Logout revokes the current session verifier on the server. Its response does not
+delete the shared session cookie: a delayed logout response must not erase a
+newer login's cookie. A retained revoked verifier cannot authenticate and expires
+normally or is replaced by the next login. The client drops its in-memory CSRF
+credential and session view; late responses are tied to the identity operation
+and credential version that issued them.
+
+## Persistence verification
 
 From `backend/`, run `python -m pytest -q`. PostgreSQL-specific tests require
 `WORKSPACE_TEST_DATABASE_URL` (owner bootstrap) and

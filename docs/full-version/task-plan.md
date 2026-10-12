@@ -51,6 +51,11 @@ membership inside a tenant transaction. Admins manage organization policy and
 membership; admins/specialists edit projects; viewers can only read/export.
 Request headers cannot substitute for a verified session.
 
+Development is explicitly configured with `MockSmsProvider` and fixed code
+`123456`, as requested by the user; no real SMS connection is used. Production
+rejects mock mode. Eskiz is the planned production adapter, not a connected
+service. The following protections apply to real-provider authentication.
+
 Phone challenges store a keyed verifier, expiry and attempt counter; plaintext
 codes are passed only to the SMS adapter, never returned or logged. Provider
 failure cannot create a usable challenge. Consumption, user creation and session

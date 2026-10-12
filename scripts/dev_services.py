@@ -11,7 +11,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,10 +141,35 @@ def verify_workspace(values):
                    env=environment, check=True)
 
 
+def run_api(values, *, port=8100, origin="http://127.0.0.1:3001"):
+    """Start only the local authenticated API, without handing it owner secrets."""
+    url = urlsplit(origin)
+    if (url.scheme != "http" or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or url.username or url.password or url.path not in {"", "/"}
+            or url.query or url.fragment or not 1 <= port <= 65535):
+        raise ValueError("Local API requires a plain HTTP loopback origin and a valid port")
+    if not values.get("DATABASE_URL") or not values.get("APP_SESSION_SECRET"):
+        raise ValueError("Runtime DATABASE_URL and APP_SESSION_SECRET are required")
+    environment = {**os.environ, **{key: value for key, value in values.items()
+        if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_"))
+        or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY"}}}
+    for key in ("MIGRATION_DATABASE_URL", "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD",
+                "WORKSPACE_TEST_DATABASE_URL", "WORKSPACE_TEST_RUNTIME_DATABASE_URL",
+                "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN", "GARAGE_RPC_SECRET"):
+        environment.pop(key, None)
+    environment.update(APP_ENVIRONMENT="development", APP_PUBLIC_ORIGIN=origin.rstrip("/"))
+    environment.setdefault("APP_SMS_PROVIDER", "mock")
+    subprocess.run([sys.executable, "-m", "uvicorn", "app.full_main:create_app", "--factory",
+        "--no-proxy-headers", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT / "backend", env=environment, check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["init", "postgres", "migrate", "verify"])
+    parser.add_argument("action", choices=["init", "postgres", "migrate", "verify", "api"])
     parser.add_argument("--bin-dir", type=Path)
+    parser.add_argument("--port", type=int, default=8100)
+    parser.add_argument("--origin", default="http://127.0.0.1:3001")
     args = parser.parse_args()
     if args.action == "init":
         initialize()
@@ -156,6 +181,8 @@ def main():
     elif args.action == "migrate":
         migrate_workspace(initialize())
         print("Workspace migrations applied using the owner connection; runtime configuration preserved.")
+    elif args.action == "api":
+        run_api(initialize(), port=args.port, origin=args.origin)
     else:
         verify_workspace(initialize())
 

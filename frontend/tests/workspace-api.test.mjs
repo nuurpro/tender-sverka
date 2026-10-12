@@ -66,3 +66,67 @@ test("failed logout can be retried without falsely assuming server revocation", 
   assert.equal(count, 3);
   await assert.rejects(api.createOrganization("Org"), error => error.status === 401);
 });
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(yes => { resolve = yes; });
+  return { promise, resolve };
+}
+
+test("an old request's delayed 401 cannot clear a newly verified session", async () => {
+  const { WorkspaceApi } = await import("../lib/workspace-api.ts");
+  const old = deferred();
+  let sentToken;
+  const api = new WorkspaceApi(async (path, init) => {
+    if (path.endsWith("/session")) return respond(session);
+    if (path.endsWith("/projects")) return old.promise;
+    if (path.endsWith("/verify")) return respond({ ...session, csrf_token: "new-session-csrf" });
+    sentToken = new Headers(init.headers).get("X-CSRF-Token");
+    return respond({ id: "org-new" });
+  });
+  await api.session();
+  const failed = assert.rejects(api.projects("org-old"), error => error.status === 401);
+  await api.verifyCode("new-challenge", "123456");
+  old.resolve(respond({ detail: "Old session expired" }, 401));
+  await failed;
+  await api.createOrganization("New organization");
+  assert.equal(sentToken, "new-session-csrf");
+});
+
+test("a delayed session read cannot replace a subsequent verified login", async () => {
+  const { WorkspaceApi } = await import("../lib/workspace-api.ts");
+  const old = deferred();
+  let sentToken;
+  const api = new WorkspaceApi(async (path, init) => {
+    if (path.endsWith("/session")) return old.promise;
+    if (path.endsWith("/verify")) return respond({ ...session, csrf_token: "new-session-csrf" });
+    sentToken = new Headers(init.headers).get("X-CSRF-Token");
+    return respond({ id: "org-new" });
+  });
+  const ignored = assert.rejects(api.session(), error => error.status === 409);
+  await api.verifyCode("new-challenge", "123456");
+  old.resolve(respond(session));
+  await ignored;
+  await api.createOrganization("New organization");
+  assert.equal(sentToken, "new-session-csrf");
+});
+
+test("a delayed logout completion cannot overwrite a subsequent login", async () => {
+  const { WorkspaceApi } = await import("../lib/workspace-api.ts");
+  const old = deferred();
+  let sentToken;
+  const api = new WorkspaceApi(async (path, init) => {
+    if (path.endsWith("/session")) return respond(session);
+    if (path.endsWith("/logout")) return old.promise;
+    if (path.endsWith("/verify")) return respond({ ...session, csrf_token: "new-session-csrf" });
+    sentToken = new Headers(init.headers).get("X-CSRF-Token");
+    return respond({ id: "org-new" });
+  });
+  await api.session();
+  const ignored = assert.rejects(api.logout(), error => error.status === 409);
+  await api.verifyCode("new-challenge", "123456");
+  old.resolve(respond({ ok: true }));
+  await ignored;
+  await api.createOrganization("New organization");
+  assert.equal(sentToken, "new-session-csrf");
+});

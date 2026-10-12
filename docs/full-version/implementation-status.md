@@ -25,9 +25,9 @@ evidence, not a smaller definition of completion.
 
 | ID | Deliverable | Current evidence/state |
 |---|---|---|
-| F01 | Organizations, phone OTP, sessions, roles, platform OIDC | Pending |
-| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository + actual PG RLS verified; API/search/cache/downloads pending |
-| F03 | Dashboard, lots, deadlines, supplier and buyer modes | Pending |
+| F01 | Organizations, phone OTP, sessions, roles, platform OIDC | Auth/roles/API verified; authorized dev mock 123456; production SMS/OIDC pending |
+| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository + API + actual PG RLS verified; search/cache/downloads pending |
+| F03 | Dashboard, lots, deadlines, supplier and buyer modes | Dashboard/project creation/deadline/report language/modes verified; lot integrations pending |
 | F04 | Immutable tender/bid revisions and source originals | Pending |
 | F05 | PostgreSQL schema, Alembic, FORCE RLS with restricted application role | Foundation + migration/startup role checks verified on PG14; PG18 deployment pending |
 | F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Pending |
@@ -46,7 +46,7 @@ evidence, not a smaller definition of completion.
 | F19 | DWG/DXF conversion, entities and source anchors | Pending; PRD expansion stage |
 | F20 | Structured product/participant requirements and lot positions | MVP basic requirements only |
 | F21 | Cross-references, duplicates, contradictions and competition concerns | Pending |
-| F22 | Add/edit/delete/merge/group, approve, version diff and retained history | Repository draft/replace/approve/fork/history verified; editor/merge/diff pending |
+| F22 | Add/edit/delete/merge/group, approve, version diff and retained history | Repository + API draft/replace/approve/fork/history verified; editor/merge/diff pending |
 | F23 | Separately extracted bid facts and evidence/source priorities | Pending |
 | F24 | Internal bid conflicts, validity at tender deadline and model matching | Pending |
 | F25 | Deterministic Decimal numeric/unit/date/set rules | Pending |
@@ -62,7 +62,7 @@ evidence, not a smaller definition of completion.
 | F35 | Clarification draft with original-source evidence; DOCX export | Pending |
 | F36 | Amendments and conservatively correct incremental recomparison | Pending |
 | F37 | Manual status overrides with reason, audit and original AI decisions | Pending |
-| F38 | Polished responsive steps/dashboard/matrix/Sheet/split-view and filters | MVP basic four-step UI |
+| F38 | Polished responsive steps/dashboard/matrix/Sheet/split-view and filters | Responsive workspace dashboard/create flows verified; full matrix/split-view pending |
 | F39 | Comparison/category charts, history, accessibility and reduced motion | Pending |
 | F40 | RU/UZ/EN interface and selected report language; original quotes retained | MVP Russian only |
 | F41 | Project chat restricted to authorized versioned uploaded sources | Pending |
@@ -125,3 +125,20 @@ evidence, not a smaller definition of completion.
   Backend tests: 144 passed against the local PostgreSQL setup. Frontend API
   tests: 6 passed; TypeScript check passed. The MVP baseline remains
   on `main` and is retained by the `mvp-baseline` tag.
+- Task 2 now passes independent specification and quality review. Backend:
+  157 tests passed with actual PostgreSQL integration; frontend: 9 API tests,
+  5 DOM tests and TypeScript checking passed; optimized Next.js build passed.
+  Deferred-response regressions cover organization changes, pending lists,
+  logout/new-login races and Strict Mode. Actual HTTP cookie tests prove that
+  delayed logout cannot erase a newer login and revoked credentials are rejected.
+- Supported API startup disables forwarded-header trust; actual Uvicorn
+  middleware tests reject the 21st attempt even with rotating forwarded IPs.
+  The development launcher excludes owner credentials and defaults to the
+  user-authorized mock code 123456. Production rejects mock mode; Eskiz is a
+  future unconfigured adapter, and no real SMS was sent.
+- Browser checks verified organization/project creation, buyer mode, Uzbek
+  report language, Tashkent deadline, persistence after reload, search and
+  logout. Mobile/tablet/desktop screenshots were inspected. The ordinary
+  non-injected local launcher also passed mock login in the optimized build.
+- Task 3a execution contract recorded in `durable-execution.md`; actual durable
+  pipeline integration and broker recovery verification remain next.

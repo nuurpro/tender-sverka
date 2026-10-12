@@ -26,8 +26,9 @@ def session(request: Request, user=Depends(current_user)):
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response, user=Depends(current_user)):
+def logout(request: Request, user=Depends(current_user)):
     request.app.state.auth.logout(request.cookies[request.app.state.cookie_name])
-    response.delete_cookie(request.app.state.cookie_name, secure=request.app.state.cookie_secure,
-        httponly=True, samesite="lax", path="/")
+    # Revoke server-side without Set-Cookie: a delayed logout response must not
+    # erase the cookie from a newer login. The revoked identifier cannot authenticate
+    # and expires normally or is replaced by the next login.
     return {"ok": True}

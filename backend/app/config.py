@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     database_url: SecretStr = Field(validation_alias=AliasChoices("DATABASE_URL", "database_url"))
     session_secret: SecretStr
     public_origin: str = "http://localhost:3000"
+    sms_provider: Literal["http", "mock", "eskiz"] = "http"
     sms_endpoint: str | None = None
     sms_token: SecretStr | None = None
     broker_url: SecretStr | None = Field(default=None, validation_alias=AliasChoices("CELERY_BROKER_URL", "broker_url"))
@@ -49,7 +50,7 @@ class Settings(BaseSettings):
     @field_validator("sms_endpoint")
     @classmethod
     def validate_sms_endpoint(cls, value: str | None) -> str | None:
-        if value is None:
+        if value is None or not value.strip():
             return None
         url = urlsplit(value)
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
@@ -74,6 +75,8 @@ class Settings(BaseSettings):
             if self.environment != "test" or database.get_backend_name() != "sqlite":
                 raise ValueError("PostgreSQL is required outside the explicit test environment")
         if self.environment == "production":
+            if self.sms_provider == "mock":
+                raise ValueError("production forbids the mock SMS provider")
             secret = self.session_secret.get_secret_value()
             if len(secret) < 32 or secret.lower().startswith(("change-me", "example", "replace")):
                 raise ValueError("production session secret must be a generated secret of at least 32 characters")
