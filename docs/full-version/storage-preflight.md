@@ -97,6 +97,14 @@ foreign access/revision/idempotency races; unauthenticated/viewer/CSRF downloads
 and uploads; actual-byte/archive limit bypass attempts; upload/storage failure
 and ambiguous-commit reconciliation without loss of committed originals.
 
+The implemented ZIP adapter bounds its raw central directory before constructing
+the standard ZIP parser: 2,048 actual entries, 8 MB directory metadata, bounded
+member names/extras/comments and a shared deadline. It accepts single-disk ZIP
+and fixed-record ZIP64 with consistent absolute offsets, including inert prefixes
+retained in the original bytes. Multidisk/extensible ZIP64 and layouts requiring
+relative-offset prefix correction are explicitly refused. These input safeguards
+do not execute archive contents.
+
 Single-node development storage is not Uzbekistan residency, key rotation,
 retention/deletion, redundant storage or backup/restore acceptance. Those remain
 explicit production tasks, including derivatives, caches and backup retention.

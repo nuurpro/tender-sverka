@@ -41,7 +41,15 @@ class Settings(BaseSettings):
     max_package_files: int = Field(default=20, ge=1, le=20)
     max_package_bytes: int = Field(default=50_000_000, ge=1, le=50_000_000)
     max_package_pages: int = Field(default=1000, ge=1, le=1000)
-    max_package_tokens: int = Field(default=250_000, ge=1)
+    max_package_tokens: int = Field(default=250_000, ge=1, le=250_000)
+    document_encryption_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices("DOCUMENT_ENCRYPTION_KEY", "document_encryption_key"))
+    document_master_key_version: str = Field(default="v1", pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
+    s3_endpoint_url: str | None = Field(default=None, validation_alias=AliasChoices("S3_ENDPOINT_URL", "s3_endpoint_url"))
+    s3_region: str = Field(default="garage", validation_alias=AliasChoices("S3_REGION", "s3_region"))
+    s3_bucket: str | None = Field(default=None, validation_alias=AliasChoices("S3_BUCKET", "s3_bucket"))
+    s3_access_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices("S3_ACCESS_KEY", "s3_access_key"))
+    s3_secret_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices("S3_SECRET_KEY", "s3_secret_key"))
+    max_active_uploads: int = Field(default=2, ge=1, le=4)
     max_buyer_participants: Literal[5] = 5
     max_supplier_participants: Literal[1] = 1
     retention_months: int = Field(default=12, ge=1)
@@ -52,6 +60,27 @@ class Settings(BaseSettings):
         url = urlsplit(value)
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError("gateway URL requires HTTPS and must not contain credentials, query or fragment")
+        return value.rstrip("/")
+
+    @field_validator("document_encryption_key")
+    @classmethod
+    def validate_document_key(cls, value):
+        if value is not None:
+            import re
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", value.get_secret_value()):
+                raise ValueError("Document encryption requires a generated 256-bit hex key")
+        return value
+
+    @field_validator("s3_endpoint_url")
+    @classmethod
+    def validate_s3_endpoint(cls, value):
+        if value is None:
+            return value
+        url = urlsplit(value)
+        if not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in {"", "/"} or (
+            url.scheme != "https" and not (url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"})
+        ):
+            raise ValueError("S3 endpoint requires HTTPS or local loopback without credentials")
         return value.rstrip("/")
 
     @field_validator("sms_endpoint")
@@ -91,6 +120,8 @@ class Settings(BaseSettings):
                 raise ValueError("production public origin requires HTTPS")
             if not database.username or database.username.lower() in {"postgres", "root"}:
                 raise ValueError("production requires a restricted application role, not a database administrator")
+            if self.s3_endpoint_url and urlsplit(self.s3_endpoint_url).scheme != "https":
+                raise ValueError("production S3 endpoint requires HTTPS")
         elif urlsplit(self.public_origin).scheme == "http" and urlsplit(self.public_origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("HTTP development origins must use a loopback hostname")
         return self

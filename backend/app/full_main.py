@@ -33,6 +33,10 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
 
     app = FastAPI(title="Tender workspace", lifespan=lifespan)
     app.state.settings, app.state.engine = settings, engine
+    import threading
+    from app.packages.service import PackageService
+    app.state.packages = PackageService(engine,settings)
+    app.state.document_admission = threading.BoundedSemaphore(settings.max_active_uploads)
     app.state.cookie_secure = settings.public_origin.startswith("https://")
     app.state.cookie_name = "__Host-tender_session" if app.state.cookie_secure else "tender_session"
     app.state.auth = AuthService(engine, settings,
@@ -41,12 +45,20 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
         allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-CSRF-Token", "Idempotency-Key", "Last-Event-ID"])
 
-    @app.middleware("http")
-    async def no_store(request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
+    class NoStoreMiddleware:
+        # Pure ASGI preserves response backpressure: authenticated document RAM
+        # admission is held until the actual HTTP send completes or cancels.
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            async def no_store_send(message):
+                if message['type'] == 'http.response.start' and scope.get('path','').startswith('/api/'):
+                    message = {**message, 'headers':[(key,value) for key,value in message.get('headers',[])
+                        if key.lower()!=b'cache-control']+[(b'cache-control',b'no-store')]}
+                await send(message)
+            await self.app(scope,receive,no_store_send)
+    app.add_middleware(NoStoreMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc):
@@ -66,4 +78,12 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     app.include_router(workspace_router)
     from app.jobs.routes import router as jobs_router
     app.include_router(jobs_router)
+    from app.packages.routes import router as packages_router
+    from app.packages.crypto import AuthenticationFailure
+    from app.packages.storage import StorageUnavailable
+    app.include_router(packages_router)
+    for error in (AuthenticationFailure,StorageUnavailable):
+        async def storage_error(request,exc):
+            return JSONResponse(status_code=503,content={'detail':'Хранилище документов временно недоступно.'})
+        app.add_exception_handler(error,storage_error)
     return app

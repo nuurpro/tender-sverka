@@ -160,3 +160,33 @@ def test_job_launcher_rejects_unknown_action_before_any_process_start(monkeypatc
     with pytest.raises(ValueError, match="worker or dispatcher"):
         module.run_jobs({}, action="arbitrary.module")
     assert observed == []
+
+
+def test_storage_verification_requires_opt_in_and_supplies_only_configured_test_values(monkeypatch):
+    module = bootstrap_module()
+    values = {"MIGRATION_DATABASE_URL": "private-owner", "DATABASE_URL": "private-runtime",
+        "S3_ENDPOINT_URL": "http://127.0.0.1:53900", "S3_REGION": "garage", "S3_BUCKET": "owned-bucket",
+        "S3_ACCESS_KEY": "private-access-key", "S3_SECRET_KEY": "private-storage-secret",
+        "DOCUMENT_ENCRYPTION_KEY": "private-document-key"}
+    mapping = {key: "WORKSPACE_TEST_" + key for key in values if key not in {"MIGRATION_DATABASE_URL", "DATABASE_URL"}}
+    for destination in mapping.values():
+        monkeypatch.setenv(destination, "inherited-value-must-not-be-used")
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: observed.append((command, kwargs)))
+    module.verify_workspace(values)
+    private_storage_removed = all(key not in observed[0][1]["env"] for key in mapping.values())
+    assert private_storage_removed
+    module.verify_workspace(values, storage=True)
+    command, options = observed[1]
+    for source, destination in mapping.items():
+        assert options["env"][destination] == values[source]
+    assert all("private" not in argument for argument in command)
+
+
+def test_storage_verification_refuses_incomplete_configuration_before_test_start(monkeypatch):
+    module = bootstrap_module()
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: observed.append(args))
+    with pytest.raises(ValueError, match="Storage integration configuration"):
+        module.verify_workspace({"MIGRATION_DATABASE_URL": "owner", "DATABASE_URL": "runtime"}, storage=True)
+    assert observed == []

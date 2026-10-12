@@ -136,17 +136,25 @@ def migrate_workspace(values):
             os.environ["DATABASE_URL"] = previous
 
 
-def verify_workspace(values, *, broker=False):
+def verify_workspace(values, *, broker=False, storage=False):
     """Run integration tests without passing private connection URLs as arguments."""
     if not values.get("MIGRATION_DATABASE_URL") or not values.get("DATABASE_URL"):
         raise ValueError("Owner and runtime connection configuration is required")
     if broker and not values.get("CELERY_BROKER_URL"):
         raise ValueError("CELERY_BROKER_URL is required for real broker verification")
+    storage_fields = ("S3_ENDPOINT_URL", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY",
+                      "S3_SECRET_KEY", "DOCUMENT_ENCRYPTION_KEY")
+    if storage and any(not values.get(key) for key in storage_fields):
+        raise ValueError("Storage integration configuration is required for actual S3 verification")
     environment = {**os.environ, "WORKSPACE_TEST_DATABASE_URL": values["MIGRATION_DATABASE_URL"],
                    "WORKSPACE_TEST_RUNTIME_DATABASE_URL": values["DATABASE_URL"]}
     environment.pop("WORKSPACE_TEST_BROKER_URL", None)
     if broker:
         environment["WORKSPACE_TEST_BROKER_URL"] = values["CELERY_BROKER_URL"]
+    for key in storage_fields:
+        environment.pop("WORKSPACE_TEST_" + key, None)
+        if storage:
+            environment["WORKSPACE_TEST_" + key] = values[key]
     subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=ROOT / "backend",
                    env=environment, check=True)
 
@@ -200,9 +208,10 @@ def main():
     parser.add_argument("--port", type=int, default=8100)
     parser.add_argument("--origin", default="http://127.0.0.1:3001")
     parser.add_argument("--broker", action="store_true", help="Enable actual RabbitMQ process tests with verify")
+    parser.add_argument("--storage", action="store_true", help="Enable actual encrypted S3 tests with verify")
     args = parser.parse_args()
-    if args.broker and args.action != "verify":
-        parser.error("--broker applies only to verify")
+    if (args.broker or args.storage) and args.action != "verify":
+        parser.error("--broker and --storage apply only to verify")
     if args.action == "init":
         initialize()
         print("Ignored local infrastructure configuration ready; existing secrets preserved.")
@@ -218,7 +227,7 @@ def main():
     elif args.action in {"worker", "dispatcher"}:
         run_jobs(initialize(), action=args.action)
     else:
-        verify_workspace(initialize(), broker=args.broker)
+        verify_workspace(initialize(), broker=args.broker, storage=args.storage)
 
 
 if __name__ == "__main__":

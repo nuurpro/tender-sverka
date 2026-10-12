@@ -144,6 +144,7 @@ class Document(Tenant, Base):
     __tablename__ = "documents"
     __table_args__ = tenant_keys(
         ForeignKeyConstraint(["organization_id", "package_id"], ["package_revisions.organization_id", "package_revisions.id"]),
+        UniqueConstraint("organization_id", "package_id", "id"),
         UniqueConstraint("organization_id", "package_id", "object_key"), CheckConstraint("size >= 0"))
     package_id: Mapped[str] = mapped_column(String(36), index=True)
     file_hash: Mapped[str] = mapped_column(String(64))
@@ -151,6 +152,68 @@ class Document(Tenant, Base):
     size: Mapped[int] = mapped_column(Integer)
     mime_type: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(500))
+    relative_path: Mapped[str] = mapped_column(String(500), default="")
+    provenance_role: Mapped[str] = mapped_column(String(16), default="document")
+
+
+class DocumentKeyEnvelope(Tenant, Base):
+    __tablename__ = "document_key_envelopes"
+    __table_args__ = tenant_keys(project_fk(),
+        ForeignKeyConstraint(["organization_id", "project_id", "package_id"],
+            ["package_revisions.organization_id", "package_revisions.project_id", "package_revisions.id"]),
+        ForeignKeyConstraint(["organization_id", "package_id", "document_id"],
+            ["documents.organization_id", "documents.package_id", "documents.id"]),
+        UniqueConstraint("organization_id", "document_id", "master_key_version"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    package_id: Mapped[str] = mapped_column(String(36))
+    document_id: Mapped[str] = mapped_column(String(36), index=True)
+    master_key_version: Mapped[str] = mapped_column(String(64))
+    envelope: Mapped[dict] = mapped_column(JSON_VALUE)
+
+
+class UploadIntent(Tenant, Base):
+    __tablename__ = "upload_intents"
+    __table_args__ = tenant_keys(project_fk(),
+        UniqueConstraint("organization_id", "project_id", "id"),
+        UniqueConstraint("organization_id", "project_id", "idempotency_key"),
+        ForeignKeyConstraint(["organization_id", "project_id", "package_id"],
+            ["package_revisions.organization_id", "package_revisions.project_id", "package_revisions.id"]))
+    project_id: Mapped[str] = mapped_column(String(36))
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    input_digest: Mapped[str] = mapped_column(String(64))
+    package_id: Mapped[str | None] = mapped_column(String(36))
+    response: Mapped[dict | None] = mapped_column(JSON_VALUE)
+
+
+class UploadAttempt(Tenant, Base):
+    __tablename__ = "upload_attempts"
+    __table_args__ = tenant_keys(project_fk(),
+        ForeignKeyConstraint(["organization_id", "project_id", "intent_id"],
+            ["upload_intents.organization_id", "upload_intents.project_id", "upload_intents.id"]),
+        CheckConstraint('cleanup_attempts >= 0'),
+        CheckConstraint("status IN ('uploading','committed','abandoned','cleaned')"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    intent_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    attempt_token: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    status: Mapped[str] = mapped_column(String(16), default="uploading")
+    objects: Mapped[list] = mapped_column(JSON_VALUE)
+    cleanup_attempts: Mapped[int] = mapped_column(Integer,default=0,server_default='0')
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class PackageInspection(Tenant, Base):
+    __tablename__ = "package_inspections"
+    __table_args__ = tenant_keys(project_fk(),
+        ForeignKeyConstraint(["organization_id", "project_id", "package_id"],
+            ["package_revisions.organization_id", "package_revisions.project_id", "package_revisions.id"]),
+        UniqueConstraint("organization_id", "package_id", "identity_hash"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    package_id: Mapped[str] = mapped_column(String(36), index=True)
+    identity_hash: Mapped[str] = mapped_column(String(64))
+    parser_version: Mapped[str] = mapped_column(String(255))
+    result: Mapped[dict] = mapped_column(JSON_VALUE)
 
 
 class ChecklistVersion(Tenant, Base):

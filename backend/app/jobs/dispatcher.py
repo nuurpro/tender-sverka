@@ -14,10 +14,13 @@ def run(settings=None):
     engine = create_engine(settings.database_url.get_secret_value(), connect_args={"connect_timeout": 5,
         "options": "-c statement_timeout=5000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=10000"})
     stop = threading.Event()
+    reconciliation = None
     for number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(number, lambda *args: stop.set())
     try:
         verify_runtime_database(engine)
+        from app.packages.reconciliation import start_reconciliation
+        reconciliation = start_reconciliation(engine,settings,stop)
         publisher = OutboxPublisher(engine, settings.job_signing_secret.get_secret_value(), confirmed_sender(app),
             lease_seconds=settings.job_publisher_lease_seconds)
         failures = 0
@@ -33,6 +36,9 @@ def run(settings=None):
                 print("Job dispatcher temporarily unavailable", flush=True)
             stop.wait(min(60, settings.job_dispatch_interval * (2 ** min(failures, 5))))
     finally:
+        stop.set()
+        if reconciliation is not None:
+            reconciliation.join(timeout=5)
         engine.dispose()
         app.close()
 

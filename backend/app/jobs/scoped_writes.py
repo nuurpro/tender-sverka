@@ -6,11 +6,11 @@ from uuid import uuid4
 from sqlalchemy import event, select
 
 from app.workspace.models import (Project, Participant, PackageRevision, Document,
-    ChecklistVersion, Requirement, ComparisonRun, utcnow)
+    ChecklistVersion, Requirement, ComparisonRun, PackageInspection, utcnow)
 from app.workspace.repository import ValidationError, canonical_json, uuid_string
 
-DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun}
-DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun)
+DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun, PackageInspection}
+DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun, PackageInspection)
 IDENTITY_FIELDS = {"id", "organization_id", "project_id", "package_id", "checklist_id",
                    "package_ids", "participant_id", "parent_version_id"}
 
@@ -85,6 +85,8 @@ class FencedWrites:
                 raise ScopeViolation()
             for package_id in row.package_ids:
                 self._require_parent(PackageRevision, package_id)
+        if model is PackageInspection:
+            self._require_parent(PackageRevision,row.package_id)
 
     def _require_parent(self, model, identity):
         # Validate JSON references as rigorously as relational parent columns.

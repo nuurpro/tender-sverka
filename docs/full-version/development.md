@@ -31,6 +31,11 @@ to the PostgreSQL tests and includes the runtime startup verification checks.
 `verify --broker` additionally supplies the ignored AMQP URL to real RabbitMQ
 process tests. An explicitly configured unavailable broker fails those tests;
 plain `verify` omits the transport tests rather than proving broker recovery.
+For encrypted package integration, `verify --storage` supplies the generated
+S3 endpoint/bucket/credentials and document key through private test environment
+variables. Use `verify --broker --storage` for both actual services. These flags
+are explicit: inherited test endpoints are discarded unless selected, and
+incomplete selected configuration fails before the test process starts.
 Run these helpers from the repository root with the backend virtualenv Python.
 `init` also adds a missing `APP_JOB_SIGNING_SECRET` to an older local file without
 rotating existing database/session/storage credentials. Worker/publisher startup
@@ -95,6 +100,20 @@ transactional outbox with broker confirmations and recovers expired leases.
 The allowlisted real document stages are still being implemented: missing
 handlers fail explicitly and no synthetic deployment handler reports success.
 Tests register separate fixture stages only in the test environment.
+
+When all encrypted-storage settings are configured, the dispatcher also starts
+an independent bounded upload reconciliation loop. It discovers durable upload
+attempts, verifies that their objects have no committed document references and
+removes abandoned ciphertext. Storage outages use retry backoff; this loop does
+not hold SQL locks during S3 calls or block outbox delivery. Keep the dispatcher
+running for automatic cleanup after an API process crash. Partially configured
+storage is refused instead of silently disabling cleanup.
+
+The real `package.inspect` handler measures supported PDF/office/text probes
+and stores a versioned inspection separately from the immutable upload manifest.
+Unknown page counts, unavailable adapters and pending extraction/tokenization
+remain explicit blockers. An inspection success is not permission to start AI
+analysis; OCR, complete extraction and token budgets still belong to later steps.
 
 ## Authenticated workspace during development
 
@@ -174,9 +193,10 @@ Garage supplies the S3 API for local integration. The official
 [quick start](https://garagehq.deuxfleurs.fr/documentation/quick-start/) supports
 the single-node configuration used here. Bucket policy/ACL support is limited;
 the application must authorize each object access itself. This single-node stack
-does not provide production redundancy or encrypt document content at rest.
-AES-256 document encryption, rotation, retention, backups and restore drills
-remain separate acceptance items. MinIO was not introduced as a new dependency:
+does not provide production redundancy or encrypt document content by itself.
+The application's AES-256 envelope encryption now protects source originals;
+derivatives, rotation operations, retention, backups and restore drills remain
+separate acceptance items. MinIO was not introduced as a new dependency:
 its [upstream repository](https://github.com/minio/minio) reports that it is no
 longer maintained.
 
@@ -185,8 +205,9 @@ This host now also has a dedicated Garage **v2.4.1** binary in Ubuntu WSL under
 It uses the generated ignored S3 credentials, persistent local data directories
 and loopback-only listeners: S3 53900, RPC 53901, admin 53903. A real boto3
 put/get/delete round trip passed and removed its own random test object. This
-verifies the private storage transport; application document encryption is
-still pending. The binary came from the official
+verifies the private storage transport. Subsequent application tests verified
+encrypted original uploads/downloads, authorization, immutable revisions and
+failure reconciliation against this instance. The binary came from the official
 [download page](https://garagehq.deuxfleurs.fr/download/).
 
 For the configured local instance, keep its foreground process attached:

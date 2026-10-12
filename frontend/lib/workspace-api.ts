@@ -1,4 +1,5 @@
 import type { NewProject, Organization, Project, WorkspaceSession } from "./workspace-types";
+import type { PackageDetail, PackagePreflight, PackageSummary, PackageUpload, PackageUploadResult } from "./package-types";
 
 export class WorkspaceApiError extends Error {
   status: number;
@@ -16,10 +17,12 @@ export class WorkspaceApi {
   private transport: Transport;
   constructor(transport: Transport = (input, init) => fetch(input, init)) { this.transport = transport; }
 
-  private async request<T>(path: string, method = "GET", body?: unknown, signed = true): Promise<T> {
+  private async request<T>(path: string, method = "GET", body?: unknown, signed = true, idempotencyKey?: string): Promise<T> {
     const credentialVersion = this.credentialVersion;
     const headers = new Headers();
-    if (body !== undefined) headers.set("Content-Type", "application/json");
+    const multipart = body instanceof FormData;
+    if (body !== undefined && !multipart) headers.set("Content-Type", "application/json");
+    if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
     if (method !== "GET" && signed) {
       if (!this.csrfToken) throw new WorkspaceApiError("Войдите в рабочую область ещё раз.", 401);
       headers.set("X-CSRF-Token", this.csrfToken);
@@ -28,7 +31,7 @@ export class WorkspaceApi {
     try {
       response = await this.transport("/api" + path, {
         method, headers, credentials: "include", cache: "no-store",
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: multipart ? body : body === undefined ? undefined : JSON.stringify(body),
       });
     } catch { throw new WorkspaceApiError("Нет связи с сервером. Повторите попытку позже.", 0); }
     if (!response.ok) {
@@ -87,5 +90,28 @@ export class WorkspaceApi {
   }
   project(organizationId: string, projectId: string) {
     return this.request<Project>("/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId));
+  }
+  private packagePath(organizationId: string, projectId: string) {
+    return "/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId) + "/packages";
+  }
+  packages(organizationId: string, projectId: string) {
+    return this.request<PackageSummary[]>(this.packagePath(organizationId, projectId));
+  }
+  packageDetail(organizationId: string, projectId: string, packageId: string) {
+    return this.request<PackageDetail>(this.packagePath(organizationId, projectId) + "/" + encodeURIComponent(packageId));
+  }
+  packagePreflight(organizationId: string, projectId: string, packageId: string) {
+    return this.request<PackagePreflight>(this.packagePath(organizationId, projectId) + "/" + encodeURIComponent(packageId) + "/preflight");
+  }
+  uploadPackage(organizationId: string, projectId: string, input: PackageUpload, idempotencyKey: string) {
+    const form = new FormData();
+    form.set("kind", input.kind);
+    if (input.participantId) form.set("participant_id", input.participantId);
+    for (const entry of input.files) form.append("files", entry.file, entry.relativePath || entry.file.webkitRelativePath || entry.file.name);
+    return this.request<PackageUploadResult>(this.packagePath(organizationId, projectId), "POST", form, true, idempotencyKey);
+  }
+  documentDownloadUrl(organizationId: string, projectId: string, packageId: string, documentId: string) {
+    return "/api" + this.packagePath(organizationId, projectId) + "/" + encodeURIComponent(packageId)
+      + "/documents/" + encodeURIComponent(documentId) + "/download";
   }
 }

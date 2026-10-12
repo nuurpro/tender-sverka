@@ -26,17 +26,17 @@ evidence, not a smaller definition of completion.
 | ID | Deliverable | Current evidence/state |
 |---|---|---|
 | F01 | Organizations, phone OTP, sessions, roles, platform OIDC | Auth/roles/API verified; authorized dev mock 123456; production SMS/OIDC pending |
-| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository + API + actual PG RLS verified; search/cache/downloads pending |
+| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository/API/RLS and original downloads verified; full search/cache isolation pending |
 | F03 | Dashboard, lots, deadlines, supplier and buyer modes | Dashboard/project creation/deadline/report language/modes verified; lot integrations pending |
-| F04 | Immutable tender/bid revisions and source originals | Pending |
+| F04 | Immutable tender/bid revisions and source originals | Encrypted immutable uploads/history/original downloads verified on actual PG/private S3 |
 | F05 | PostgreSQL schema, Alembic, FORCE RLS with restricted application role | Foundation + migration/startup role checks verified on PG14; PG18 deployment pending |
-| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Substrate/API verified on actual PG/RabbitMQ; real document stages pending |
-| F07 | Idempotent mutations and optimistic edit conflicts | Checklist revisions/job creation + HTTP retry/cancel replay verified; remaining mutations/pipeline stages pending |
-| F08 | 20 files/50 MB, expanded archives, page/token/context/budget preflight | Pending |
+| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Substrate/API + real package inspection verified; extraction/OCR/comparison stages pending |
+| F07 | Idempotent mutations and optimistic edit conflicts | Checklist/job/HTTP retry-cancel/upload replay verified; remaining mutations/stages pending |
+| F08 | 20 files/50 MB, expanded archives, page/token/context/budget preflight | Actual wire/logical/expanded ZIP limits and known PDF page probes verified; full counts/token/context/run budgets pending |
 | F09 | PDF text/scans, DOC/DOCX/RTF/ODT/TXT | MVP text PDF/DOCX only |
 | F10 | XLS/XLSX/ODS/CSV, merged cells and safe formula values | MVP XLSX only; formulas excluded |
 | F11 | JPG/PNG/TIFF/HEIC/BMP/WEBP, phone photos and multipage TIFF | Pending |
-| F12 | ZIP/RAR/7Z, preserved folders and safe bounded extraction | Pending |
+| F12 | ZIP/RAR/7Z, preserved folders and safe bounded extraction | Bounded ZIP/directory validation/folders/originals verified; RAR/7Z pending |
 | F13 | Pasted text and authorized lot-link import | Pending |
 | F14 | Document-type classification and manual correction | Pending |
 | F15 | OCR, layout, dewarp/rotation, tables across pages, handwriting | Pending |
@@ -67,10 +67,10 @@ evidence, not a smaller definition of completion.
 | F40 | RU/UZ/EN interface and selected report language; original quotes retained | MVP Russian only |
 | F41 | Project chat restricted to authorized versioned uploaded sources | Pending |
 | F42 | Snapshot-consistent PDF, XLSX, DOCX and JSON/API exports | MVP XLSX only |
-| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Pending |
+| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Versioned tenant/package inspection identity/checkpoint reuse verified; full content caches pending |
 | F44 | Gateway capability profiles, budgets, bounded failure recovery | MVP chat/responses adapter only |
 | F45 | Reproducibility via snapshots/cache and explicit new evaluation runs | Pending |
-| F46 | TLS, AES-256 at rest, retention (12 months), deletion incl. derived data | Pending |
+| F46 | TLS, AES-256 at rest, retention (12 months), deletion incl. derived data | AES-256 authenticated originals verified; derivatives/DB volumes/TLS/rotation/retention/deletion pending |
 | F47 | TenderZone/TenderGPT lot/SSO/commission integrations | Pending; external contracts required |
 | F48 | Company/bad-performer/license registry checks with as-of provenance | Pending; external contracts required |
 | F49 | Dictionaries, templates, types, policy and provider administration | Pending |
@@ -191,3 +191,29 @@ evidence, not a smaller definition of completion.
   remaining full-version ledger requirement continue as planned. The live
   authenticated API was restarted and verifies migration head 0006; anonymous
   session/job access is rejected. The original MVP remains clean at its baseline.
+- Task 3b is implementing encrypted originals, immutable package manifests,
+  bounded input/archive preflight, upload intents/reconciliation and authorized
+  downloads. Initial actual restricted-PG/private-S3 checks exercise encryption,
+  anonymous refusal, tamper/scope/key rejection, upload revision/idempotency
+  races, ambiguous commit and the durable inspection handler. This task has not
+  yet passed independent specification/quality review.
+- Added explicit `verify --storage` opt-in without private values in argv;
+  bootstrap tests: 15 passed. Client upload/history/preflight/download methods
+  preserve cookies, CSRF, native multipart bytes and retry idempotency. Frontend:
+  11 API tests, 5 DOM tests and TypeScript checking passed. These client methods
+  do not establish the still-pending full document workflow UI.
+- Independent root verification of task 3b passed **276 backend tests** against
+  actual PostgreSQL, RabbitMQ and private S3; the optimized frontend build also
+  passed. Specification review nevertheless reproduced a revoked-session upload
+  replay and eager ZIP-directory allocation before limits. Both are required
+  corrections before this task can pass review or be committed as complete.
+- Task 3b passed independent specification re-review and quality review after
+  both corrections. Root final verification: **281 backend tests passed**, no
+  skips, against actual PostgreSQL/RabbitMQ/private S3. Frontend: **11 API +
+  5 DOM tests**, TypeScript and optimized build passed. The inspection stage
+  preserves explicit pending OCR/extraction/tokenization gates.
+- Quality review recorded nonblocking maintenance hardening for task 10:
+  quarantine internally corrupted upload ownership metadata without deleting
+  its objects, and continue bounded cleanup of otherwise valid attempts. API
+  uploads generate valid immutable ownership records; this observation does
+  not establish a current external deletion or access bypass.

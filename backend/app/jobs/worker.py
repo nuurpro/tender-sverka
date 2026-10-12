@@ -134,7 +134,10 @@ def create_celery_app(settings=None, *, registry=None):
         from app.config import Settings
         settings = Settings()
     require_worker_settings(settings)
-    registry = registry or HandlerRegistry(settings.environment)
+    if registry is None:
+        registry = HandlerRegistry(settings.environment)
+        from app.packages.inspection import register_handlers
+        register_handlers(registry,settings)
     if registry.environment != settings.environment:
         raise ValueError("Registry environment does not match worker environment")
     app = Celery("tender", broker=settings.broker_url.get_secret_value())
