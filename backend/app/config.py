@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     sms_endpoint: str | None = None
     sms_token: SecretStr | None = None
     broker_url: SecretStr | None = Field(default=None, validation_alias=AliasChoices("CELERY_BROKER_URL", "broker_url"))
+    job_signing_secret: SecretStr = SecretStr("")
+    job_lease_seconds: int = Field(default=60, ge=5, le=3600)
+    job_max_attempts: int = Field(default=3, ge=1, le=20)
+    job_publisher_lease_seconds: int = Field(default=30, ge=5, le=3600)
+    job_dispatch_interval: float = Field(default=2, ge=0.1, le=60)
+    job_sse_interval: float = Field(default=2, ge=0.1, le=15)
+    job_queue: str = Field(default="tender.jobs", pattern=r"^[a-zA-Z0-9_.-]{1,100}$")
     redis_url: SecretStr | None = Field(default=None, validation_alias=AliasChoices("REDIS_URL", "redis_url"))
     gateway_api_base: str = "https://agentrouter.org/v1"
     gateway_api_key: SecretStr = Field(default="", validation_alias=AliasChoices("CODEX_GATEWAY_API_KEY", "gateway_api_key"))

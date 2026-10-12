@@ -14,7 +14,7 @@ python scripts/dev_services.py init
 docker compose --env-file infrastructure/.env -f infrastructure/compose.yaml config --quiet
 docker compose --env-file infrastructure/.env -f infrastructure/compose.yaml up -d --wait --wait-timeout 180
 python scripts/dev_services.py migrate
-python scripts/dev_services.py verify
+python scripts/dev_services.py verify --broker
 ```
 
 `init` preserves existing configuration and generates passwords instead of
@@ -28,7 +28,13 @@ The `migrate` helper reads the ignored local owner URL, temporarily assigns it
 only during Alembic execution, and restores the prior environment even on error.
 The saved runtime URL is not overwritten. `verify` supplies both URLs privately
 to the PostgreSQL tests and includes the runtime startup verification checks.
+`verify --broker` additionally supplies the ignored AMQP URL to real RabbitMQ
+process tests. An explicitly configured unavailable broker fails those tests;
+plain `verify` omits the transport tests rather than proving broker recovery.
 Run these helpers from the repository root with the backend virtualenv Python.
+`init` also adds a missing `APP_JOB_SIGNING_SECRET` to an older local file without
+rotating existing database/session/storage credentials. Worker/publisher startup
+requires that separate secret; it must never fall back to the session key.
 
 The Compose stack binds ports to localhost: PostgreSQL 55432, RabbitMQ 5673,
 Redis 56379, S3 53900. Generated service URLs refer to those host ports; containers
@@ -47,6 +53,48 @@ This does not modify another PostgreSQL cluster. It uses port 55432, so use eith
 native PostgreSQL or the Compose PostgreSQL service at a time. PostgreSQL 14
 validates repository/RLS/trigger behavior locally; the planned PostgreSQL 18
 deployment must still be verified on its actual image.
+
+For this development host, RabbitMQ 4.0.5 is additionally running in the Ubuntu
+WSL distribution. Its AMQP listener is `127.0.0.1:5673`, with the local `tender`
+vhost and generated credentials already in ignored `infrastructure/.env`.
+Windows Kombu authentication was verified. The ignored
+`infrastructure/rabbitmq.local.conf` supplied the native configuration; no shared
+default password was committed. This is a local broker for real transport tests,
+not production HA/TLS qualification. The separate Erlang CLI/cluster listener
+still requires production network policy. Native service and Compose RabbitMQ
+must not compete for the same AMQP port. The configuration follows RabbitMQ's
+[listener settings](https://www.rabbitmq.com/docs/networking) and
+[initial user/vhost settings](https://www.rabbitmq.com/docs/configure).
+
+On this Windows host, WSL stops when its last attached process exits. Keep the
+owned local broker in a foreground terminal during transport tests:
+
+```powershell
+wsl.exe -d Ubuntu -u root -- bash -lc 'exec runuser -u rabbitmq -- /usr/sbin/rabbitmq-server'
+```
+
+This assumes the isolated native configuration has already been installed. Do
+not start a second instance if the owned systemd RabbitMQ service is running;
+stop that local service first, or use the Compose broker instead. This recipe
+does not configure an existing shared RabbitMQ deployment.
+
+## Durable job processes
+
+After migrations and the broker are available, start each development process
+from the checkout root in its own terminal:
+
+```powershell
+python scripts/dev_services.py worker
+python scripts/dev_services.py dispatcher
+```
+
+Both launchers exclude migration/admin credentials and force the development
+environment. The worker uses a single-process pool on Windows; this does not
+qualify the production Linux prefork deployment. The dispatcher publishes the
+transactional outbox with broker confirmations and recovers expired leases.
+The allowlisted real document stages are still being implemented: missing
+handlers fail explicitly and no synthetic deployment handler reports success.
+Tests register separate fixture stages only in the test environment.
 
 ## Authenticated workspace during development
 
@@ -77,13 +125,16 @@ With the Next.js proxy, the default IP quota conservatively applies to the proxy
 socket address; deployment-specific trusted proxy handling requires an explicit
 policy and separate verification before enabling it.
 
-The local helper and development template select `APP_SMS_PROVIDER=mock`:
+The local helper forces `APP_SMS_PROVIDER=mock`, even if a provider is inherited
+from the shell or local file, following the instruction to connect no real SMS
+in this development version. The development template also selects mock:
 `MockSmsProvider` uses the fixed code **123456**, sends no SMS, and the challenge
 screen explicitly labels this development mode. Production rejects this provider.
 This development choice follows the user's instruction; it does not establish
 production phone identity or SMS delivery acceptance.
 
-For a real provider, select `APP_SMS_PROVIDER=http` and configure
+For a future real-provider deployment, use its own launcher with
+`APP_SMS_PROVIDER=http` and configure
 `APP_SMS_ENDPOINT` and `APP_SMS_TOKEN` in the ignored local configuration. The
 vendor-neutral HTTPS adapter posts `{phone,message}`
 JSON with a Bearer token, refuses redirects, and times out after ten seconds.
@@ -128,6 +179,25 @@ AES-256 document encryption, rotation, retention, backups and restore drills
 remain separate acceptance items. MinIO was not introduced as a new dependency:
 its [upstream repository](https://github.com/minio/minio) reports that it is no
 longer maintained.
+
+This host now also has a dedicated Garage **v2.4.1** binary in Ubuntu WSL under
+`/var/lib/tender-sverka-dev/garage/`, running as the `tender-garage` system user.
+It uses the generated ignored S3 credentials, persistent local data directories
+and loopback-only listeners: S3 53900, RPC 53901, admin 53903. A real boto3
+put/get/delete round trip passed and removed its own random test object. This
+verifies the private storage transport; application document encryption is
+still pending. The binary came from the official
+[download page](https://garagehq.deuxfleurs.fr/download/).
+
+For the configured local instance, keep its foreground process attached:
+
+```powershell
+wsl.exe -d Ubuntu -u root -- bash -lc 'exec runuser -u tender-garage -- python3 /var/lib/tender-sverka-dev/garage/launch.py'
+```
+
+The local launcher reads private configuration from its restricted directory;
+credentials are not supplied in command-line arguments. Do not run this native
+instance and the Compose storage service on port 53900 simultaneously.
 
 The production deployment must run in Uzbekistan with TLS, restricted roles,
 encrypted data and backups, redundant services, and approved external processor

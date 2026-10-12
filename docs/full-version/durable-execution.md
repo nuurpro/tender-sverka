@@ -16,6 +16,10 @@ business stage must subsequently use this substrate and pass its own gates.
 - Every heartbeat, checkpoint and terminal write checks the exact lease token
   and that it has not expired. Cancellation invalidates the lease immediately.
   A delayed worker cannot publish results after cancellation or lease takeover.
+- Capture the original token/deadline under the job row lock. Flush all pending
+  SQL before the final application commit check. A deferred PostgreSQL guard
+  checks the deadline again during actual COMMIT; extending a heartbeat or
+  clearing a terminal lease cannot substitute a new deadline for the original.
 - Add tenant-qualified checkpoints and ordered progress events with composite
   job/project foreign keys and FORCE RLS. Append events under the same job row
   lock as the transition; event IDs never depend on process memory.
@@ -23,6 +27,12 @@ business stage must subsequently use this substrate and pass its own gates.
   Retry retains usable checkpoints; changed inputs create a new immutable job.
   Checkpoint/result writes occur in the same fenced transaction. Handlers never
   commit domain results independently of the lease fence.
+- Domain callbacks receive detached records through an explicit project-scoped
+  model allowlist, including validated package/checklist ancestry. They cannot
+  receive a Session, run arbitrary SQL, change tenant context, access global
+  identity/control models or reassign scope/parent identities. Validate reads,
+  inserts, updates and deletes; row-level organization policy alone is not a
+  project boundary. New pipeline models require an explicit scope adapter.
 - Failed jobs can be explicitly retried within a bounded attempt policy. Retry
   requeues the existing outbox record transactionally and audits the action;
   terminal success/cancellation is not silently rerun. Cancellation is repeatable

@@ -26,6 +26,7 @@ def initialize():
             "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD", "RABBITMQ_PASSWORD",
             "REDIS_PASSWORD", "S3_SECRET_KEY", "APP_SESSION_SECRET", "DOCUMENT_ENCRYPTION_KEY",
             "GARAGE_RPC_SECRET", "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN",
+            "APP_JOB_SIGNING_SECRET",
         )}
         values["S3_ACCESS_KEY"] = "GK" + secrets.token_hex(16)
         values["MIGRATION_DATABASE_URL"] = (
@@ -45,6 +46,10 @@ def initialize():
         if os.name != "nt":
             ENV.chmod(0o600)
     values = dict(line.split("=", 1) for line in ENV.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#"))
+    if not values.get("APP_JOB_SIGNING_SECRET"):
+        values["APP_JOB_SIGNING_SECRET"] = secrets.token_hex(32)
+        with ENV.open("a", encoding="utf-8") as existing:
+            existing.write("\nAPP_JOB_SIGNING_SECRET=" + values["APP_JOB_SIGNING_SECRET"] + "\n")
     config = INFRA / "garage.local.toml"
     if not config.exists():
         config.write_text(
@@ -131,14 +136,34 @@ def migrate_workspace(values):
             os.environ["DATABASE_URL"] = previous
 
 
-def verify_workspace(values):
+def verify_workspace(values, *, broker=False):
     """Run integration tests without passing private connection URLs as arguments."""
     if not values.get("MIGRATION_DATABASE_URL") or not values.get("DATABASE_URL"):
         raise ValueError("Owner and runtime connection configuration is required")
+    if broker and not values.get("CELERY_BROKER_URL"):
+        raise ValueError("CELERY_BROKER_URL is required for real broker verification")
     environment = {**os.environ, "WORKSPACE_TEST_DATABASE_URL": values["MIGRATION_DATABASE_URL"],
                    "WORKSPACE_TEST_RUNTIME_DATABASE_URL": values["DATABASE_URL"]}
+    environment.pop("WORKSPACE_TEST_BROKER_URL", None)
+    if broker:
+        environment["WORKSPACE_TEST_BROKER_URL"] = values["CELERY_BROKER_URL"]
     subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=ROOT / "backend",
                    env=environment, check=True)
+
+
+def runtime_environment(values):
+    """Share development runtime settings without migration/admin credentials."""
+    if not values.get("DATABASE_URL") or not values.get("APP_SESSION_SECRET"):
+        raise ValueError("Runtime DATABASE_URL and APP_SESSION_SECRET are required")
+    environment = {**os.environ, **{key: value for key, value in values.items()
+        if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_"))
+        or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY"}}}
+    for key in ("MIGRATION_DATABASE_URL", "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD",
+                "WORKSPACE_TEST_DATABASE_URL", "WORKSPACE_TEST_RUNTIME_DATABASE_URL", "WORKSPACE_TEST_BROKER_URL",
+                "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN", "GARAGE_RPC_SECRET"):
+        environment.pop(key, None)
+    environment.update(APP_ENVIRONMENT="development", APP_SMS_PROVIDER="mock")
+    return environment
 
 
 def run_api(values, *, port=8100, origin="http://127.0.0.1:3001"):
@@ -148,29 +173,36 @@ def run_api(values, *, port=8100, origin="http://127.0.0.1:3001"):
             or url.username or url.password or url.path not in {"", "/"}
             or url.query or url.fragment or not 1 <= port <= 65535):
         raise ValueError("Local API requires a plain HTTP loopback origin and a valid port")
-    if not values.get("DATABASE_URL") or not values.get("APP_SESSION_SECRET"):
-        raise ValueError("Runtime DATABASE_URL and APP_SESSION_SECRET are required")
-    environment = {**os.environ, **{key: value for key, value in values.items()
-        if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_"))
-        or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY"}}}
-    for key in ("MIGRATION_DATABASE_URL", "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD",
-                "WORKSPACE_TEST_DATABASE_URL", "WORKSPACE_TEST_RUNTIME_DATABASE_URL",
-                "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN", "GARAGE_RPC_SECRET"):
-        environment.pop(key, None)
-    environment.update(APP_ENVIRONMENT="development", APP_PUBLIC_ORIGIN=origin.rstrip("/"))
-    environment.setdefault("APP_SMS_PROVIDER", "mock")
+    environment = runtime_environment(values)
+    environment["APP_PUBLIC_ORIGIN"] = origin.rstrip("/")
     subprocess.run([sys.executable, "-m", "uvicorn", "app.full_main:create_app", "--factory",
         "--no-proxy-headers", "--host", "127.0.0.1", "--port", str(port)],
         cwd=ROOT / "backend", env=environment, check=True)
 
 
+def run_jobs(values, *, action):
+    """Local job processes use the same restricted runtime role as the API."""
+    if action not in {"worker", "dispatcher"}:
+        raise ValueError("Job action must be worker or dispatcher")
+    if not values.get("APP_JOB_SIGNING_SECRET") or not values.get("CELERY_BROKER_URL"):
+        raise ValueError("APP_JOB_SIGNING_SECRET and CELERY_BROKER_URL are required")
+    command = [sys.executable, "-m", "app.jobs." + action]
+    if action == "worker":
+        # Windows has no supported prefork pool; production uses its own launcher.
+        command.extend(["--pool=solo", "--concurrency=1", "--loglevel=WARNING"])
+    subprocess.run(command, cwd=ROOT / "backend", env=runtime_environment(values), check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["init", "postgres", "migrate", "verify", "api"])
+    parser.add_argument("action", choices=["init", "postgres", "migrate", "verify", "api", "worker", "dispatcher"])
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument("--port", type=int, default=8100)
     parser.add_argument("--origin", default="http://127.0.0.1:3001")
+    parser.add_argument("--broker", action="store_true", help="Enable actual RabbitMQ process tests with verify")
     args = parser.parse_args()
+    if args.broker and args.action != "verify":
+        parser.error("--broker applies only to verify")
     if args.action == "init":
         initialize()
         print("Ignored local infrastructure configuration ready; existing secrets preserved.")
@@ -183,8 +215,10 @@ def main():
         print("Workspace migrations applied using the owner connection; runtime configuration preserved.")
     elif args.action == "api":
         run_api(initialize(), port=args.port, origin=args.origin)
+    elif args.action in {"worker", "dispatcher"}:
+        run_jobs(initialize(), action=args.action)
     else:
-        verify_workspace(initialize())
+        verify_workspace(initialize(), broker=args.broker)
 
 
 if __name__ == "__main__":

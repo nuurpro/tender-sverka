@@ -39,7 +39,7 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
         sms_sender if sms_sender is not None else configured_sender(settings), clock)
     app.add_middleware(CORSMiddleware, allow_origins=[settings.public_origin],
         allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Content-Type", "X-CSRF-Token"])
+        allow_headers=["Content-Type", "X-CSRF-Token", "Idempotency-Key", "Last-Event-ID"])
 
     @app.middleware("http")
     async def no_store(request, call_next):
@@ -64,4 +64,6 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     app.include_router(auth_router)
     from app.full_workspace.routes import router as workspace_router
     app.include_router(workspace_router)
+    from app.jobs.routes import router as jobs_router
+    app.include_router(jobs_router)
     return app

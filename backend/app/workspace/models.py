@@ -209,6 +209,8 @@ class ComparisonRun(Tenant, Base):
 class Job(Tenant, Base):
     __tablename__ = "jobs"
     __table_args__ = tenant_keys(project_fk(), UniqueConstraint("organization_id", "project_id", "idempotency_key"),
+                                UniqueConstraint("organization_id", "project_id", "id"),
+                                CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')"),
                                 CheckConstraint("attempt >= 0 AND progress >= 0 AND progress <= 100"))
     project_id: Mapped[str] = mapped_column(String(36), index=True)
     stage: Mapped[str] = mapped_column(String(64))
@@ -220,6 +222,8 @@ class Job(Tenant, Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[dict | None] = mapped_column(JSON_VALUE)
     lease_owner: Mapped[str | None] = mapped_column(String(255))
+    lease_token: Mapped[str | None] = mapped_column(String(64))
+    event_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
@@ -233,6 +237,49 @@ class OutboxEvent(Tenant, Base):
     job_id: Mapped[str] = mapped_column(String(36), index=True)
     payload: Mapped[dict] = mapped_column(JSON_VALUE)
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    claim_token: Mapped[str | None] = mapped_column(String(64))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    available_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    publish_attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(String(64))
+
+
+def job_fk():
+    return ForeignKeyConstraint(["organization_id", "project_id", "job_id"],
+                               ["jobs.organization_id", "jobs.project_id", "jobs.id"])
+
+
+class JobCheckpoint(Tenant, Base):
+    __tablename__ = "job_checkpoints"
+    __table_args__ = tenant_keys(project_fk(), job_fk(), UniqueConstraint("organization_id", "job_id", "step"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    step: Mapped[str] = mapped_column(String(64))
+    input_version_hash: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON_VALUE)
+
+
+class JobProgressEvent(Tenant, Base):
+    __tablename__ = "job_progress_events"
+    __table_args__ = tenant_keys(project_fk(), job_fk(), UniqueConstraint("organization_id", "job_id", "sequence"),
+                                CheckConstraint("sequence >= 1"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    data: Mapped[dict] = mapped_column(JSON_VALUE)
+
+
+class JobOperation(Tenant, Base):
+    __tablename__ = "job_operations"
+    __table_args__ = tenant_keys(project_fk(), job_fk(),
+        UniqueConstraint("organization_id", "job_id", "request_key"))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    request_key: Mapped[str] = mapped_column(String(255))
+    operation: Mapped[str] = mapped_column(String(16))
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON_VALUE)
 
 
 class AuditEvent(Tenant, Base):

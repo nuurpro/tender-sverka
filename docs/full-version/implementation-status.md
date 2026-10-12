@@ -30,8 +30,8 @@ evidence, not a smaller definition of completion.
 | F03 | Dashboard, lots, deadlines, supplier and buyer modes | Dashboard/project creation/deadline/report language/modes verified; lot integrations pending |
 | F04 | Immutable tender/bid revisions and source originals | Pending |
 | F05 | PostgreSQL schema, Alembic, FORCE RLS with restricted application role | Foundation + migration/startup role checks verified on PG14; PG18 deployment pending |
-| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Pending |
-| F07 | Idempotent mutations and optimistic edit conflicts | Checklist revisions/job creation verified in repository; HTTP/worker stages pending |
+| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Substrate/API verified on actual PG/RabbitMQ; real document stages pending |
+| F07 | Idempotent mutations and optimistic edit conflicts | Checklist revisions/job creation + HTTP retry/cancel replay verified; remaining mutations/pipeline stages pending |
 | F08 | 20 files/50 MB, expanded archives, page/token/context/budget preflight | Pending |
 | F09 | PDF text/scans, DOC/DOCX/RTF/ODT/TXT | MVP text PDF/DOCX only |
 | F10 | XLS/XLSX/ODS/CSV, merged cells and safe formula values | MVP XLSX only; formulas excluded |
@@ -142,3 +142,52 @@ evidence, not a smaller definition of completion.
   non-injected local launcher also passed mock login in the optimized build.
 - Task 3a execution contract recorded in `durable-execution.md`; actual durable
   pipeline integration and broker recovery verification remain next.
+- Local RabbitMQ 4.0.5 installed in Ubuntu WSL and AMQP authentication verified
+  from Windows. A separate job-signing key was added without rotating existing
+  local secrets. Task 3a implementation is in progress, with first restricted-PG
+  claim/takeover/cancellation/checkpoint/outbox behavior tests exercised; it has
+  not yet passed independent review or broker recovery acceptance.
+- Real RabbitMQ/Celery process tests exercised duplicate confirmed delivery,
+  connection failure, lost acknowledgement, worker restart, heartbeat and
+  checkpoint reuse without duplicate output. Independent full verification
+  passed 188 tests on restricted PostgreSQL and the actual broker. Specification
+  review nevertheless reproduced two missing safeguards: callback writes could
+  escape project scope, and final SQL flush could outlive the worker lease.
+  Task 3a remains in review while these gaps are fixed; green tests alone did
+  not satisfy its acceptance contract.
+- Local launchers now support `worker`, `dispatcher` and `verify --broker`
+  without passing private connection strings on the command line or granting
+  owner credentials to worker/API processes. Bootstrap behavior tests passed
+  13 cases, including explicit transport opt-in and preserved local secrets.
+- A private native Garage v2.4.1 instance started in Ubuntu WSL on loopback S3
+  port 53900 with its own restricted system user. Actual boto3 put/get/delete
+  passed and removed the random test object. This is transport evidence only;
+  encrypted originals, package preflight and production storage gates remain
+  pending. Their task 3b contract is recorded in `storage-preflight.md`.
+- A separate storage experiment persisted Cobblestone-256 ciphertext, verified
+  its round trip, rejected wrong scope and truncation, and confirmed anonymous
+  object GET returns 403. The owned test object was removed. This validates the
+  chosen primitive/transport combination, not application upload authorization,
+  envelope key wrapping or complete document storage integration.
+- Task 3a specification re-review passed after reproducing and fixing both
+  scope/commit safeguards. New regressions failed against the earlier code;
+  restricted-PG reproductions now reject cross-project/context changes and roll
+  back expired output. Detached domain records remain usable across repeated
+  flushes and package/checklist ancestry operations. Migration
+  `0006_job_commit_fence` checks the original lease deadline during COMMIT.
+- Root verification through `scripts/dev_services.py verify --broker` passed
+  **216 tests**, no skips, on actual PostgreSQL and RabbitMQ. The independent
+  specification reviewer additionally passed 49 focused cases and its own
+  scope/expiry reproductions. Quality review is the remaining task 3a gate.
+- Task 3a quality review found comparison JSON references escaping project scope
+  and mutable draft-parent identity. Actual PostgreSQL regressions reproduced
+  both; shared ancestry validation now covers existing/staged/deleted parents,
+  reads and writes, and freezes reference identities. Legitimate staged forks
+  and comparisons remain supported. Specification and quality re-reviews passed,
+  each independently exercising the 10 new boundary cases.
+- Final backend suite: **226 passed** with actual PostgreSQL and RabbitMQ.
+  Root additionally verified 44 current fence/substrate cases. Task 3a is
+  complete within its contract; encrypted storage/package preflight and every
+  remaining full-version ledger requirement continue as planned. The live
+  authenticated API was restarted and verifies migration head 0006; anonymous
+  session/job access is rejected. The original MVP remains clean at its baseline.
