@@ -6,13 +6,13 @@ from uuid import uuid4
 from sqlalchemy import event, select
 
 from app.workspace.models import (Project, Participant, PackageRevision, Document,
-    ChecklistVersion, Requirement, ComparisonRun, PackageInspection, utcnow)
+    ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt, utcnow)
 from app.workspace.repository import ValidationError, canonical_json, uuid_string
 
-DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun, PackageInspection}
-DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun, PackageInspection)
+DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt}
+DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt)
 IDENTITY_FIELDS = {"id", "organization_id", "project_id", "package_id", "checklist_id",
-                   "package_ids", "participant_id", "parent_version_id"}
+                   "package_ids", "participant_id", "parent_version_id", "job_id", "document_id", "attempt_id", "artifact_id", "actor_id"}
 
 
 class ScopeViolation(ValidationError):
@@ -27,10 +27,11 @@ class FencedWrites:
     the only write operations. Scope identity cannot be reassigned on a record.
     New pipeline models must be explicitly added to this domain allowlist.
     """
-    def __init__(self, session, organization_id, project_id):
+    def __init__(self, session, organization_id, project_id, job_id=None):
         self.__session, self.__organization, self.__project = session, organization_id, project_id
         self.__records = {}
         self.__deleted = set()
+        self.__job = job_id
 
     def _model(self, model):
         if model not in DOMAIN_MODELS:
@@ -87,6 +88,17 @@ class FencedWrites:
                 self._require_parent(PackageRevision, package_id)
         if model is PackageInspection:
             self._require_parent(PackageRevision,row.package_id)
+        if model in {NormalizedArtifact, ArtifactUploadAttempt}:
+            if self.__job is None or row.job_id != self.__job:
+                raise ScopeViolation()
+            self._require_parent(PackageRevision, row.package_id)
+            with self.__session.no_autoflush:
+                document = self.__session.scalar(self._query(Document).where(Document.id == row.document_id,
+                    Document.package_id == row.package_id))
+            if document is None:
+                raise ScopeViolation()
+            if model is NormalizedArtifact:
+                self._require_parent(ArtifactUploadAttempt, row.attempt_id)
 
     def _require_parent(self, model, identity):
         # Validate JSON references as rigorously as relational parent columns.
@@ -214,8 +226,8 @@ class FencedWrites:
         raise RuntimeError("Transaction is owned by the lease fence")
 
 
-def fenced_callback(db, callback, organization_id, project_id):
-    writes = FencedWrites(db, organization_id, project_id)
+def fenced_callback(db, callback, organization_id, project_id, job_id=None):
+    writes = FencedWrites(db, organization_id, project_id, job_id)
     def reject_commit(session):
         raise RuntimeError("Transaction is owned by the lease fence")
     event.listen(db, "before_commit", reject_commit)

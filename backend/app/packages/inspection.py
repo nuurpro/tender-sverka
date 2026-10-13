@@ -26,10 +26,17 @@ def parser_identity():
             'openpyxl':version('openpyxl'),'options':{'text_probe':True},'model':'none','tokenizer':'pending'}
 
 
-def inspection_profile(settings,language):
-    identity=parser_identity()
-    return {**identity,'language':language,'options':{**identity['options'],
-            'max_pages':settings.max_package_pages,'max_tokens':settings.max_package_tokens}}
+def inspection_profile(settings,language,*,readiness=None):
+    from app.documents.runner import DocumentRunnerError,ensure_runner_available
+    from app.documents.service import processing_profile
+    native=None
+    try:
+        native=processing_profile(settings,language,probe=(readiness or ensure_runner_available)(settings)).model_dump(mode='json')
+    except DocumentRunnerError:
+        pass  # Original upload does not depend on a running parser.
+    return {'policy':'inspection-v2-native','language':language,'model':'none','tokenizer':'pending',
+        'native_profile':native,'runner_status':'available' if native else 'unavailable',
+        'options':{'text_probe':True,'max_pages':settings.max_package_pages,'max_tokens':settings.max_package_tokens}}
 
 
 def inspect_document(data,mime,max_pages=1000,max_tokens=250_000):
@@ -83,95 +90,86 @@ def inspect_document(data,mime,max_pages=1000,max_tokens=250_000):
     return report
 
 
-def isolated_inspection(data,mime,max_pages,max_tokens,*,timeout=20):
-    """Parser gets bounded RAM input and a hard process runtime, no temp file."""
-    environment={key:value for key,value in os.environ.items() if key.upper() in {'PATH','SYSTEMROOT','WINDIR','LANG','LC_ALL'}}
-    environment['PYTHONPATH']=str(Path(__file__).resolve().parents[2])
-    header=json.dumps({'mime':mime,'max_pages':max_pages,'max_tokens':max_tokens}).encode()+b'\n'
-    process=subprocess.Popen([sys.executable,'-m','app.packages.inspection'],stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=environment,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-    try:
-        try:
-            output,_=process.communicate(header+data,timeout=timeout)
-            if process.returncode!=0 or len(output)>64*1024:
-                raise ValueError()
-            return json.loads(output)
-        except subprocess.TimeoutExpired:
-            process.kill();process.communicate()
-            return {'page_count':None,'token_count':None,'token_upper_bound':None,'text_probe_bytes':None,
-                'coverage':'failed','blockers':['parser_timeout','page_count_pending','extraction_pending','tokenizer_profile_pending'],'warnings':[]}
-        except (ValueError,OSError):
-            return {'page_count':None,'token_count':None,'token_upper_bound':None,'text_probe_bytes':None,
-                'coverage':'failed','blockers':['parser_failed','page_count_pending','extraction_pending','tokenizer_profile_pending'],'warnings':[]}
-    finally:
-        if process.poll() is None:
-            process.kill();process.wait(timeout=5)
-
-
-def inspection_handler(settings,*,packages=None):
+def inspection_handler(settings,*,packages=None,parser=None,readiness=None):
+    if settings.environment!='test' and (parser is not None or readiness is not None):
+        raise ValueError('Inspection adapter injection requires the explicit test environment')
+    from app.documents.runner import run_document,ensure_runner_available,DocumentRunnerError
+    from app.documents.schemas import ParserProfile
+    from app.documents.service import processing_profile
+    from .service import authorized
+    parser=parser or run_document
+    readiness=readiness or ensure_runner_available
     def handle(context):
         service=context.service;org=service.organization_id
-        package_id=context.payload.get('package_id')
+        package_id=context.payload.get('package_id');actor=context.payload.get('actor_id')
         pipeline=packages or PackageService(service.engine,settings)
         with tenant_transaction(service.engine,org) as db:
-            job=db.scalar(select(Job).where(Job.organization_id==org,Job.id==context.job_id))
-            repo=Repository(db,org,str(uuid4()))
-            package=nested_package(repo,job.project_id,package_id)
+            job=db.get(Job,context.job_id);project_id=job.project_id
+        frozen=context.payload.get('inspection_profile')
+        if not isinstance(frozen,dict) or not frozen.get('native_profile'):
+            raise ValidationError('Frozen inspection has no available isolated runner; start explicit normalization')
+        native=ParserProfile.model_validate(frozen['native_profile'])
+        actual=processing_profile(settings,native.language,{'encoding':native.encoding,'csv_delimiter':native.csv_delimiter},probe=readiness(settings))
+        if native!=actual or frozen['policy']!='inspection-v2-native':
+            raise ValidationError('Inspection parser/policy changed; start a new explicit normalization')
+        with authorized(service.engine,org,actor,project_id,mutate=True) as (db,repo):
+            package=nested_package(repo,project_id,package_id)
             if hashlib.sha256(canonical_json(package.manifest).encode()).hexdigest()!=context.payload.get('manifest_hash'):
                 raise ValidationError('Package inspection input mismatch')
-            profile=context.payload.get('inspection_profile')
-            if not isinstance(profile,dict) or profile!=inspection_profile(settings,profile.get('language')):
-                raise ValidationError('Inspection parser/policy profile changed; create a new versioned inspection job')
-            identity={'organization_id':org,'project_id':job.project_id,'package_id':package_id,
-                'manifest':package.manifest,'parser':profile}
-            identity_hash=hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+            identity_hash=hashlib.sha256(canonical_json({'package':package.id,'manifest':package.manifest,'parser':frozen}).encode()).hexdigest()
             existing=db.scalar(repo._query(PackageInspection).where(PackageInspection.package_id==package_id,PackageInspection.identity_hash==identity_hash))
             existing_result=existing.result if existing else None
-            project_id=job.project_id
-            metadata=[pipeline._document_metadata(db,repo,project_id,package_id,doc.id)
-                for doc in db.scalars(repo._query(Document).where(Document.package_id==package_id,Document.provenance_role=='document'))] if not existing else []
+            metadata=[pipeline._document_metadata(db,repo,project_id,package_id,doc.id) for doc in db.scalars(
+                repo._query(Document).where(Document.package_id==package_id,Document.provenance_role=='document'))] if not existing else []
         if existing_result is not None:
-            context.checkpoint('inspect',identity_hash,existing_result,progress=100)
-            return
+            context.checkpoint('inspect',identity_hash,existing_result,progress=100);return
         results=[]
+        from app.documents.service import DocumentService
+        cancelled=DocumentService(service.engine,settings,packages=pipeline)._cancelled(context,actor)
         for doc in metadata:
             try:
+                if cancelled():
+                    from app.jobs.service import LeaseLost
+                    raise LeaseLost()
                 original=pipeline.read_original(org,project_id,doc)
+                pipeline.authorize(org,actor,project_id,mutate=True)
+                normalized=parser(original,doc['name'],doc['mime_type'],native,settings,cancelled)
             except StorageUnavailable:
                 from app.jobs.worker import TransientInfrastructureFailure
                 raise TransientInfrastructureFailure() from None
-            result=isolated_inspection(original,doc['mime_type'],profile['options']['max_pages'],profile['options']['max_tokens'])
-            results.append({'document_id':doc['id'],**result})
-        known_pages=sum(r['page_count'] for r in results if r['page_count'] is not None)
-        pages=known_pages if all(r['page_count'] is not None for r in results) else None
-        probes=[r['token_upper_bound'] for r in results]
-        bound=sum(probes) if all(n is not None for n in probes) else None
-        blockers=sorted({b for r in results for b in r['blockers']})
+            finally:
+                original=None
+            unresolved=sorted({entry.state for entry in normalized.coverage if entry.state not in {'extracted','text_extracted','corrected'}})
+            blockers=unresolved+['extraction_pending','tokenizer_profile_pending']
+            if normalized.physical_pages is None:
+                blockers.append('page_count_pending')
+            results.append({'document_id':doc['id'],'page_count':normalized.physical_pages,'token_count':None,
+                'token_upper_bound':None,'text_probe_bytes':sum(len(block.original_text.encode()) for block in normalized.blocks),
+                'coverage':'probe' if normalized.blocks else (unresolved[0] if unresolved else 'pending'),
+                'blockers':blockers,'warnings':list(normalized.warnings)})
+        known_pages=sum(result['page_count'] for result in results if result['page_count'] is not None)
+        pages=known_pages if all(result['page_count'] is not None for result in results) else None
+        blockers=sorted({blocker for result in results for blocker in result['blockers']})
         if known_pages>settings.max_package_pages:
             blockers.append('page_limit_exceeded')
-        if bound is not None and bound>settings.max_package_tokens:
-            blockers.append('token_probe_bound_exceeded')
         report={'inspection_status':'inspected','analysis_allowed':False,'page_count':pages,'known_page_count':known_pages,
-            'token_count':None,'token_upper_bound':bound,'tokenizer_profile':'pending','parser_versions':profile,
+            'token_count':None,'token_upper_bound':None,'tokenizer_profile':'pending','parser_versions':frozen,
             'blockers':sorted(set(blockers+['extraction_pending','tokenizer_profile_pending'])),
-            'warnings':sorted({w for r in results for w in r['warnings']}),'documents':results}
+            'warnings':sorted({warning for result in results for warning in result['warnings']}),'documents':results}
+        pipeline.authorize(org,actor,project_id,mutate=True)
         def persist(writes):
             writes.add(PackageInspection(organization_id=org,project_id=project_id,package_id=package_id,
-                identity_hash=identity_hash,parser_version=POLICY_VERSION,result=report))
+                identity_hash=identity_hash,parser_version='inspection-v2-native',result=report))
         context.checkpoint('inspect',identity_hash,report,persist,progress=100)
     return handle
 
 
 def register_handlers(registry,settings):
+    from app.documents.runner import ensure_runner_available,DocumentRunnerError
+    if settings.document_runner_mode=='disabled':
+        return
+    try:
+        ensure_runner_available(settings)
+    except DocumentRunnerError:
+        return
     registry.register('package.inspect',inspection_handler(settings))
-
-
-if __name__=='__main__':
-    logging.disable(logging.CRITICAL)
-    from .crypto import MAX_DOCUMENT_BYTES
-    options=json.loads(sys.stdin.buffer.readline(2048))
-    data=sys.stdin.buffer.read(MAX_DOCUMENT_BYTES+1)
-    if len(data)>MAX_DOCUMENT_BYTES:
-        raise SystemExit(1)
-    print(json.dumps(inspect_document(data,options['mime'],options['max_pages'],options['max_tokens'])))

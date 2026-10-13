@@ -23,7 +23,7 @@ class S3Store:
                           connect_timeout=5, read_timeout=30, retries={'max_attempts':2}))
 
     def _key(self, key):
-        if not isinstance(key,str) or not re.fullmatch(r'org/[0-9a-f-]{36}/project/[0-9a-f-]{36}/attempt/[0-9a-f]{64}/[0-9a-f-]{36}',key):
+        if not isinstance(key,str) or not re.fullmatch(r'org/[0-9a-f-]{36}/project/[0-9a-f-]{36}/(?:attempt|artifact-attempt)/[0-9a-f]{64}/[0-9a-f-]{36}',key):
             raise StorageUnavailable()
 
     def put(self, key, data):

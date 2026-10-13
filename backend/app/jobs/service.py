@@ -144,7 +144,7 @@ class JobService:
             if write_result:
                 # Callback does local SQL only. A Session transaction is owned here;
                 # callbacks must never commit or do provider/network work.
-                fenced_callback(db, write_result, self.organization_id, job.project_id)
+                fenced_callback(db, write_result, self.organization_id, job.project_id, job.id)
             self._fence(db, job_id, token)  # Also fences a callback that outlived expiry.
             db.add(JobCheckpoint(organization_id=self.organization_id, project_id=job.project_id,
                 job_id=job.id, step=step, input_version_hash=digest, result=copy.deepcopy(result)))
@@ -165,7 +165,7 @@ class JobService:
         with self._transaction() as db:
             job = self._fence(db, job_id, token)
             if write_result:
-                fenced_callback(db, write_result, self.organization_id, job.project_id)
+                fenced_callback(db, write_result, self.organization_id, job.project_id, job.id)
             self._fence(db, job_id, token)
             self._terminal(db, job, "succeeded")
 

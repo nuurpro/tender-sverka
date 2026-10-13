@@ -41,6 +41,13 @@ Run these helpers from the repository root with the backend virtualenv Python.
 rotating existing database/session/storage credentials. Worker/publisher startup
 requires that separate secret; it must never fall back to the session key.
 
+`verify --documents` explicitly enables the actual isolated parser tests using
+the four saved `DOCUMENT_RUNNER_*`/path/distribution settings. It refuses a
+disabled or incomplete selection before starting pytest and removes inherited
+runner test flags when this option is absent. Combine it with `--broker
+--storage` once the document stage is ready. Ordinary unit tests do not qualify
+the operating-system isolation boundary.
+
 The Compose stack binds ports to localhost: PostgreSQL 55432, RabbitMQ 5673,
 Redis 56379, S3 53900. Generated service URLs refer to those host ports; containers
 must use their service names when API/worker images are added.
@@ -194,9 +201,10 @@ Garage supplies the S3 API for local integration. The official
 the single-node configuration used here. Bucket policy/ACL support is limited;
 the application must authorize each object access itself. This single-node stack
 does not provide production redundancy or encrypt document content by itself.
-The application's AES-256 envelope encryption now protects source originals;
-derivatives, rotation operations, retention, backups and restore drills remain
-separate acceptance items. MinIO was not introduced as a new dependency:
+The application's AES-256 envelope encryption now protects source originals
+and normalized evidence artifacts. Further conversion/OCR derivatives, rotation
+operations, retention, backups and restore drills remain separate acceptance
+items. MinIO was not introduced as a new dependency:
 its [upstream repository](https://github.com/minio/minio) reports that it is no
 longer maintained.
 
@@ -219,6 +227,46 @@ wsl.exe -d Ubuntu -u root -- bash -lc 'exec runuser -u tender-garage -- python3 
 The local launcher reads private configuration from its restricted directory;
 credentials are not supplied in command-line arguments. Do not run this native
 instance and the Compose storage service on port 53900 simultaneously.
+
+## Isolated native document runtime (task 4a verified)
+
+The Windows development application uses a dedicated non-root Ubuntu WSL
+runtime. This host now has Python 3.14.4 and a parser virtual environment at
+`/home/acer/.local/share/tender-sverka/document-runtime`. Its PDF/DOCX/XLSX/schema
+libraries run inside bubblewrap with no home/Windows mounts. Native readers,
+encrypted artifact publication, retry history and sandbox fault checks passed
+independent specification/quality review and the actual 390-test backend suite.
+Conversion/OCR/CAD, isolated archive admission and real quality/performance
+acceptance remain subsequent delivery work.
+
+To prepare a comparable fresh WSL runtime, install `python3.14-venv` and
+`bubblewrap` from its distribution, then use the ordinary WSL user:
+
+```powershell
+wsl.exe -d Ubuntu -- python3 -m venv /home/acer/.local/share/tender-sverka/document-runtime
+wsl.exe -d Ubuntu -- /home/acer/.local/share/tender-sverka/document-runtime/bin/python -m pip install pdfplumber python-docx openpyxl pydantic
+python scripts/stage_document_parser.py --distribution Ubuntu
+```
+
+The staging helper copies only `__init__.py`, `entrypoint.py`, `readers.py` and
+`schemas.py`. It preserves exact bytes, computes the same content hash as the
+runner, preserves old code versions and atomically selects the new version.
+It never stages server modules, credentials, configuration or uploaded files.
+Use the paths returned by that helper in ignored `infrastructure/.env`:
+
+```dotenv
+DOCUMENT_RUNNER_MODE=wsl-bubblewrap
+DOCUMENT_RUNTIME_PYTHON=/home/acer/.local/share/tender-sverka/document-runtime/bin/python
+DOCUMENT_PARSER_CODE_PATH=/home/acer/.local/share/tender-sverka/document-parser/app/documents
+DOCUMENT_WSL_DISTRIBUTION=Ubuntu
+```
+
+The local API/worker launcher carries these runtime fields while excluding test
+flags and migration/admin credentials. Re-stage after changing pure parser code;
+an old stage cannot satisfy the current code hash. Actual dependency versions,
+Python build, code identity and resource policy belong to frozen processing
+profiles. Disabled/unavailable isolation blocks normalization. Production uses
+its verified Linux runner and its own deployment configuration.
 
 The production deployment must run in Uzbekistan with TLS, restricted roles,
 encrypted data and backups, redundant services, and approved external processor

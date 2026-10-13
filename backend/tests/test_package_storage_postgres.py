@@ -30,8 +30,11 @@ def real_storage():
     fields=['S3_ENDPOINT_URL','S3_REGION','S3_BUCKET','S3_ACCESS_KEY','S3_SECRET_KEY','DOCUMENT_ENCRYPTION_KEY']
     if any(not os.environ.get(prefix+field) for field in fields):
         pytest.fail('Configured actual S3 acceptance requires every storage setting')
+    document_fields={field.lower():os.environ[prefix+field] for field in
+        ('DOCUMENT_RUNNER_MODE','DOCUMENT_RUNTIME_PYTHON','DOCUMENT_PARSER_CODE_PATH','DOCUMENT_WSL_DISTRIBUTION')
+        if os.environ.get(prefix+field)}
     settings=Settings(environment='test',database_url='sqlite://',session_secret='s'*48,
-        **{field.lower():os.environ[prefix+field] for field in fields})
+        **{field.lower():os.environ[prefix+field] for field in fields},**document_fields)
     store=S3Store(settings)
     cipher=EnvelopeCipher({'v1':bytes.fromhex(settings.document_encryption_key.get_secret_value())},'v1')
     return settings,store,cipher
@@ -258,6 +261,8 @@ def test_actual_encrypted_inspection_worker_signed_message_checkpoint_and_duplic
     from app.workspace.models import JobCheckpoint
     from test_package_inspection import pdf
     service,engine,org,actor,project=actual_packages
+    if service.settings.document_runner_mode=='disabled':
+        pytest.skip('Explicit actual isolated document runner required for inspection acceptance')
     response=service.upload(org,actor,project,'tender',None,prepare_files([('document.pdf',pdf())]),'worker')
     job_id=response['inspection_job_id']
     with tenant_transaction(engine,org) as db:

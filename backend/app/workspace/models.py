@@ -322,6 +322,71 @@ class JobCheckpoint(Tenant, Base):
     result: Mapped[dict] = mapped_column(JSON_VALUE)
 
 
+class ArtifactUploadAttempt(Tenant, Base):
+    __tablename__ = 'artifact_upload_attempts'
+    __table_args__ = tenant_keys(project_fk(), job_fk(),
+        UniqueConstraint('organization_id', 'project_id', 'id'),
+        ForeignKeyConstraint(['organization_id', 'project_id', 'package_id'],
+            ['package_revisions.organization_id', 'package_revisions.project_id', 'package_revisions.id']),
+        ForeignKeyConstraint(['organization_id', 'package_id', 'document_id'],
+            ['documents.organization_id', 'documents.package_id', 'documents.id']),
+        CheckConstraint("status IN ('uploading','committed','abandoned','cleaned')"),
+        CheckConstraint('cleanup_attempts >= 0 AND content_size > 0 AND content_size <= 16777216'))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    package_id: Mapped[str] = mapped_column(String(36))
+    document_id: Mapped[str] = mapped_column(String(36))
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey('users.id'))
+    artifact_id: Mapped[str] = mapped_column(String(36), unique=True)
+    attempt_token: Mapped[str] = mapped_column(String(64), unique=True)
+    lease_token: Mapped[str] = mapped_column(String(64))
+    object_key: Mapped[str] = mapped_column(String(1024), unique=True)
+    content_size: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    envelope: Mapped[dict] = mapped_column(JSON_VALUE)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    status: Mapped[str] = mapped_column(String(16), default='uploading')
+    cleanup_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class NormalizedArtifact(Tenant, Base):
+    __tablename__ = 'normalized_artifacts'
+    __table_args__ = tenant_keys(project_fk(), job_fk(),
+        ForeignKeyConstraint(['organization_id', 'project_id', 'package_id'],
+            ['package_revisions.organization_id', 'package_revisions.project_id', 'package_revisions.id']),
+        ForeignKeyConstraint(['organization_id', 'package_id', 'document_id'],
+            ['documents.organization_id', 'documents.package_id', 'documents.id']),
+        ForeignKeyConstraint(['organization_id', 'project_id', 'attempt_id'],
+            ['artifact_upload_attempts.organization_id', 'artifact_upload_attempts.project_id', 'artifact_upload_attempts.id']),
+        UniqueConstraint('organization_id', 'job_id', 'document_id', 'run_attempt',name='uq_normalized_artifact_attempt'),
+        CheckConstraint("status IN ('complete','partial','unavailable')"),
+        CheckConstraint('block_count >= 0 AND content_size > 0 AND content_size <= 16777216'),
+        CheckConstraint('run_attempt BETWEEN 1 AND 20',name='ck_artifact_run_attempt'),
+        Index('ix_normalized_artifact_cache', 'organization_id', 'project_id', 'cache_key', 'cache_eligible'))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36))
+    package_id: Mapped[str] = mapped_column(String(36))
+    document_id: Mapped[str] = mapped_column(String(36))
+    attempt_id: Mapped[str] = mapped_column(String(36))
+    run_attempt: Mapped[int] = mapped_column(Integer,default=1,server_default='1')
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey('users.id'))
+    file_hash: Mapped[str] = mapped_column(String(64))
+    profile_hash: Mapped[str] = mapped_column(String(64))
+    profile: Mapped[dict] = mapped_column(JSON_VALUE)
+    cache_key: Mapped[str] = mapped_column(String(64))
+    cache_eligible: Mapped[bool] = mapped_column(Boolean)
+    object_key: Mapped[str] = mapped_column(String(1024), unique=True)
+    content_size: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    envelope: Mapped[dict] = mapped_column(JSON_VALUE)
+    status: Mapped[str] = mapped_column(String(16))
+    format: Mapped[str] = mapped_column(String(16))
+    block_count: Mapped[int] = mapped_column(Integer)
+    physical_pages: Mapped[int | None] = mapped_column(Integer)
+    coverage_summary: Mapped[dict] = mapped_column(JSON_VALUE)
+
+
 class JobProgressEvent(Tenant, Base):
     __tablename__ = "job_progress_events"
     __table_args__ = tenant_keys(project_fk(), job_fk(), UniqueConstraint("organization_id", "job_id", "sequence"),

@@ -1,0 +1,72 @@
+{
+  "schema_version": "expert-case-draft-1",
+  "dataset_kind": "template",
+  "case_id": null,
+  "split": null,
+  "procurement_type": null,
+  "languages": [],
+  "tender_deadline": null,
+  "annotation_version": null,
+  "experts": [],
+  "reviewed_at": null,
+  "processing_authorization": null,
+  "files": [
+    {
+      "file_id": null,
+      "relative_path": null,
+      "sha256": null,
+      "package": null,
+      "participant_id": null,
+      "language": null
+    }
+  ],
+  "requirements": [
+    {
+      "id": null,
+      "scope": null,
+      "item": null,
+      "parameter": null,
+      "condition": null,
+      "importance": null,
+      "predicate": null,
+      "sources": [
+        { "file_id": null, "quote": null, "anchor": null }
+      ]
+    }
+  ],
+  "participants": [
+    {
+      "id": null,
+      "results": [
+        {
+          "requirement_id": null,
+          "status": null,
+          "explanation": null,
+          "coverage": null,
+          "sources": [],
+          "disagreement": null
+        }
+      ],
+      "recommendations": [
+        {
+          "action": null,
+          "requirement_ids": [],
+          "severity": null,
+          "applicable": null,
+          "expert_reason": null
+        }
+      ]
+    }
+  ],
+  "ocr_regions": [
+    {
+      "file_id": null,
+      "anchor": null,
+      "source_type": null,
+      "transcription": null,
+      "unreadable": null,
+      "numeric_values": []
+    }
+  ],
+  "annotation_history": []
+}

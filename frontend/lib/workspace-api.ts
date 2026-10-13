@@ -1,5 +1,6 @@
 import type { NewProject, Organization, Project, WorkspaceSession } from "./workspace-types";
 import type { PackageDetail, PackagePreflight, PackageSummary, PackageUpload, PackageUploadResult } from "./package-types";
+import type { ArtifactDetail, BoundSourceBlock, NormalizationArtifacts, NormalizationOptions, NormalizationRun, SourceBlocks } from "./document-types";
 
 export class WorkspaceApiError extends Error {
   status: number;
@@ -113,5 +114,27 @@ export class WorkspaceApi {
   documentDownloadUrl(organizationId: string, projectId: string, packageId: string, documentId: string) {
     return "/api" + this.packagePath(organizationId, projectId) + "/" + encodeURIComponent(packageId)
       + "/documents/" + encodeURIComponent(documentId) + "/download";
+  }
+  private sourcePackagePath(organizationId: string, projectId: string, packageId: string) {
+    return this.packagePath(organizationId, projectId) + "/" + encodeURIComponent(packageId);
+  }
+  normalizePackage(organizationId: string, projectId: string, packageId: string, options: NormalizationOptions, idempotencyKey: string) {
+    return this.request<NormalizationRun>(this.sourcePackagePath(organizationId, projectId, packageId) + "/normalize", "POST", options, true, idempotencyKey);
+  }
+  normalizationRuns(organizationId: string, projectId: string, packageId: string) {
+    return this.request<NormalizationRun[]>(this.sourcePackagePath(organizationId, projectId, packageId) + "/normalizations");
+  }
+  normalizationArtifacts(organizationId: string, projectId: string, packageId: string, jobId: string) {
+    return this.request<NormalizationArtifacts>(this.sourcePackagePath(organizationId, projectId, packageId) + "/normalizations/" + encodeURIComponent(jobId) + "/artifacts");
+  }
+  artifactDetail(organizationId: string, projectId: string, packageId: string, artifactId: string) {
+    return this.request<ArtifactDetail>(this.sourcePackagePath(organizationId, projectId, packageId) + "/artifacts/" + encodeURIComponent(artifactId));
+  }
+  artifactBlocks(organizationId: string, projectId: string, packageId: string, artifactId: string, offset = 0, limit = 100) {
+    const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    return this.request<SourceBlocks>(this.sourcePackagePath(organizationId, projectId, packageId) + "/artifacts/" + encodeURIComponent(artifactId) + "/blocks?" + query);
+  }
+  artifactBlock(organizationId: string, projectId: string, packageId: string, artifactId: string, blockId: string) {
+    return this.request<BoundSourceBlock>(this.sourcePackagePath(organizationId, projectId, packageId) + "/artifacts/" + encodeURIComponent(artifactId) + "/blocks/" + encodeURIComponent(blockId));
   }
 }

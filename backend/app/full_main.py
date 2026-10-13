@@ -82,6 +82,12 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     from app.packages.crypto import AuthenticationFailure
     from app.packages.storage import StorageUnavailable
     app.include_router(packages_router)
+    from app.documents.routes import router as documents_router
+    from app.documents.runner import DocumentRunnerError
+    app.include_router(documents_router)
+    @app.exception_handler(DocumentRunnerError)
+    async def document_runner_error(request, exc):
+        return JSONResponse(status_code=503,content={'detail':'Изолированный обработчик документов недоступен.'})
     for error in (AuthenticationFailure,StorageUnavailable):
         async def storage_error(request,exc):
             return JSONResponse(status_code=503,content={'detail':'Хранилище документов временно недоступно.'})

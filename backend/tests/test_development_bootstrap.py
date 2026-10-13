@@ -190,3 +190,50 @@ def test_storage_verification_refuses_incomplete_configuration_before_test_start
     with pytest.raises(ValueError, match="Storage integration configuration"):
         module.verify_workspace({"MIGRATION_DATABASE_URL": "owner", "DATABASE_URL": "runtime"}, storage=True)
     assert observed == []
+
+
+def test_document_verification_is_explicit_and_does_not_inherit_a_runner(monkeypatch):
+    module = bootstrap_module()
+    values = {"MIGRATION_DATABASE_URL": "private-owner", "DATABASE_URL": "private-runtime",
+        "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu"}
+    for key in values:
+        if key.startswith("DOCUMENT_"):
+            monkeypatch.setenv("WORKSPACE_TEST_" + key, "unselected-inherited-runner")
+    monkeypatch.setenv("DOCUMENT_RUNNER_INTEGRATION", "1")
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: observed.append((command, kwargs)))
+    module.verify_workspace(values)
+    integration_removed = "DOCUMENT_RUNNER_INTEGRATION" not in observed[0][1]["env"]
+    runners_removed = not any(key.startswith("WORKSPACE_TEST_DOCUMENT_") for key in observed[0][1]["env"])
+    assert integration_removed and runners_removed
+    module.verify_workspace(values, documents=True)
+    command, options = observed[1]
+    for key in values:
+        if key.startswith("DOCUMENT_"):
+            assert options["env"]["WORKSPACE_TEST_" + key] == values[key]
+    assert options["env"]["DOCUMENT_RUNNER_INTEGRATION"] == "1"
+    assert all("private" not in argument for argument in command)
+
+
+def test_document_verification_refuses_missing_or_disabled_runner_before_start(monkeypatch):
+    module = bootstrap_module()
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: observed.append(args))
+    for runner in ({}, {"DOCUMENT_RUNNER_MODE": "disabled"}):
+        with pytest.raises(ValueError, match="Document runner configuration"):
+            module.verify_workspace({"MIGRATION_DATABASE_URL": "owner", "DATABASE_URL": "runtime", **runner}, documents=True)
+    assert observed == []
+
+
+def test_runtime_launch_preserves_only_selected_document_runner_configuration(monkeypatch):
+    module = bootstrap_module()
+    monkeypatch.setenv("WORKSPACE_TEST_DOCUMENT_RUNTIME_PYTHON", "test-only-runner")
+    values = {"DATABASE_URL": "runtime", "APP_SESSION_SECRET": "private-session",
+        "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu"}
+    environment = module.runtime_environment(values)
+    assert all(environment[key] == value for key, value in values.items())
+    test_runtime_removed = "WORKSPACE_TEST_DOCUMENT_RUNTIME_PYTHON" not in environment
+    assert test_runtime_removed
+    assert environment["APP_SMS_PROVIDER"] == "mock"

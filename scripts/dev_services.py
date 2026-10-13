@@ -17,6 +17,8 @@ from urllib.parse import quote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 INFRA = ROOT / "infrastructure"
 ENV = INFRA / ".env"
+DOCUMENT_RUNNER_FIELDS = ("DOCUMENT_RUNNER_MODE", "DOCUMENT_RUNTIME_PYTHON",
+                          "DOCUMENT_PARSER_CODE_PATH", "DOCUMENT_WSL_DISTRIBUTION")
 
 
 def initialize():
@@ -136,7 +138,7 @@ def migrate_workspace(values):
             os.environ["DATABASE_URL"] = previous
 
 
-def verify_workspace(values, *, broker=False, storage=False):
+def verify_workspace(values, *, broker=False, storage=False, documents=False):
     """Run integration tests without passing private connection URLs as arguments."""
     if not values.get("MIGRATION_DATABASE_URL") or not values.get("DATABASE_URL"):
         raise ValueError("Owner and runtime connection configuration is required")
@@ -146,6 +148,9 @@ def verify_workspace(values, *, broker=False, storage=False):
                       "S3_SECRET_KEY", "DOCUMENT_ENCRYPTION_KEY")
     if storage and any(not values.get(key) for key in storage_fields):
         raise ValueError("Storage integration configuration is required for actual S3 verification")
+    if documents and (values.get("DOCUMENT_RUNNER_MODE") not in {"bubblewrap", "wsl-bubblewrap"}
+                      or any(not values.get(key) for key in DOCUMENT_RUNNER_FIELDS)):
+        raise ValueError("Document runner configuration is required for actual sandbox verification")
     environment = {**os.environ, "WORKSPACE_TEST_DATABASE_URL": values["MIGRATION_DATABASE_URL"],
                    "WORKSPACE_TEST_RUNTIME_DATABASE_URL": values["DATABASE_URL"]}
     environment.pop("WORKSPACE_TEST_BROKER_URL", None)
@@ -155,6 +160,13 @@ def verify_workspace(values, *, broker=False, storage=False):
         environment.pop("WORKSPACE_TEST_" + key, None)
         if storage:
             environment["WORKSPACE_TEST_" + key] = values[key]
+    environment.pop("DOCUMENT_RUNNER_INTEGRATION", None)
+    for key in DOCUMENT_RUNNER_FIELDS:
+        environment.pop("WORKSPACE_TEST_" + key, None)
+        if documents:
+            environment["WORKSPACE_TEST_" + key] = values[key]
+    if documents:
+        environment["DOCUMENT_RUNNER_INTEGRATION"] = "1"
     subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=ROOT / "backend",
                    env=environment, check=True)
 
@@ -165,11 +177,14 @@ def runtime_environment(values):
         raise ValueError("Runtime DATABASE_URL and APP_SESSION_SECRET are required")
     environment = {**os.environ, **{key: value for key, value in values.items()
         if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_"))
-        or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY"}}}
+        or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY", *DOCUMENT_RUNNER_FIELDS}}}
     for key in ("MIGRATION_DATABASE_URL", "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD",
                 "WORKSPACE_TEST_DATABASE_URL", "WORKSPACE_TEST_RUNTIME_DATABASE_URL", "WORKSPACE_TEST_BROKER_URL",
                 "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN", "GARAGE_RPC_SECRET"):
         environment.pop(key, None)
+    for key in tuple(environment):
+        if key.startswith("WORKSPACE_TEST_DOCUMENT_") or key == "DOCUMENT_RUNNER_INTEGRATION":
+            environment.pop(key, None)
     environment.update(APP_ENVIRONMENT="development", APP_SMS_PROVIDER="mock")
     return environment
 
@@ -209,9 +224,10 @@ def main():
     parser.add_argument("--origin", default="http://127.0.0.1:3001")
     parser.add_argument("--broker", action="store_true", help="Enable actual RabbitMQ process tests with verify")
     parser.add_argument("--storage", action="store_true", help="Enable actual encrypted S3 tests with verify")
+    parser.add_argument("--documents", action="store_true", help="Enable actual isolated document runner tests with verify")
     args = parser.parse_args()
-    if (args.broker or args.storage) and args.action != "verify":
-        parser.error("--broker and --storage apply only to verify")
+    if (args.broker or args.storage or args.documents) and args.action != "verify":
+        parser.error("--broker, --storage and --documents apply only to verify")
     if args.action == "init":
         initialize()
         print("Ignored local infrastructure configuration ready; existing secrets preserved.")
@@ -227,7 +243,7 @@ def main():
     elif args.action in {"worker", "dispatcher"}:
         run_jobs(initialize(), action=args.action)
     else:
-        verify_workspace(initialize(), broker=args.broker, storage=args.storage)
+        verify_workspace(initialize(), broker=args.broker, storage=args.storage, documents=args.documents)
 
 
 if __name__ == "__main__":

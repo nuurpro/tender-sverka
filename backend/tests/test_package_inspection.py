@@ -58,6 +58,11 @@ def test_real_handler_persists_fenced_inspection_checkpoint_once(packages):
     from app.workspace.database import tenant_transaction
     from app.workspace.models import PackageInspection, JobCheckpoint
     client,engine,app,store,org,pid=packages
+    from app.packages.service import PackageService
+    from app.documents.runner import parser_code_hash
+    from app.documents.readers import normalize
+    probe=lambda settings: {'isolated':True,'code_hash':parser_code_hash(),'runtime_versions':{}}
+    app.state.packages=PackageService(engine,app.state.settings,store,app.state.packages.cipher,inspection_readiness=probe)
     base=f'/api/organizations/{org}/projects/{pid}'
     response=upload(client,base,name='renamed.bin',data=pdf()).json()
     job_id=response['inspection_job_id'];package=response['package']['id']
@@ -65,7 +70,8 @@ def test_real_handler_persists_fenced_inspection_checkpoint_once(packages):
     from app.packages.inspection import inspection_handler
     runner=JobService(engine,org);claim=runner.claim(job_id)
     context=ExecutionContext(runner,job_id,claim)
-    handler=inspection_handler(app.state.settings,packages=app.state.packages)
+    handler=inspection_handler(app.state.settings,packages=app.state.packages,
+        parser=lambda data,name,mime,profile,settings,cancelled=None: normalize(data,name,mime,profile),readiness=probe)
     handler(context);handler(context);runner.finish(job_id,claim.token)
     report=client.get(base+f'/packages/{package}/preflight').json()
     assert report['inspection_status']=='inspected' and report['page_count']==2
@@ -107,3 +113,12 @@ def test_inspection_job_freezes_parser_policy_options_and_language(packages):
         profile=job.payload['inspection_profile']
         assert profile['options']['max_pages']==1000 and profile['options']['max_tokens']==250000
         assert profile['language']=='ru' and profile['model']=='none' and profile['tokenizer']=='pending'
+
+
+def test_disabled_runner_never_registers_host_inspection_handler():
+    from app.jobs.worker import HandlerRegistry
+    from app.packages.inspection import register_handlers
+    from test_full_settings import settings
+    registry=HandlerRegistry('test')
+    register_handlers(registry,settings())
+    assert registry.get('package.inspect') is None

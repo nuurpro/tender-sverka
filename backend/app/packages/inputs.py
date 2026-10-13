@@ -7,6 +7,7 @@ import struct
 import time
 import unicodedata
 import zipfile
+import zlib
 
 from python_multipart import MultipartParser
 from python_multipart.multipart import parse_options_header
@@ -114,6 +115,10 @@ def _zip(data, deadline, max_bytes):
         z = zipfile.ZipFile(BytesIO(data))
         if len(z.infolist()) > 2048:
             raise ValidationError('ZIP entry limit exceeded')
+        offsets=sorted(info.header_offset for info in z.infolist())+[z.start_dir]
+        if len(set(offsets))!=len(offsets):
+            raise ValidationError('Overlapping ZIP local headers')
+        next_offset=dict(zip(offsets,offsets[1:]))
         names, total, contents = set(), 0, []
         for info in z.infolist():
             if time.monotonic() > deadline:
@@ -124,18 +129,43 @@ def _zip(data, deadline, max_bytes):
             if identity in names or info.flag_bits & 1 or stat.S_ISLNK(info.external_attr >> 16):
                 raise ValidationError('Ambiguous, encrypted or symlink archive member')
             names.add(identity)
-            if info.is_dir():
-                continue
             # Declared length is an early rejection only; actual bytes are counted.
             if info.file_size > max_bytes:
                 raise ValidationError('Archive expansion exceeds byte limit')
-            output = bytearray()
-            with z.open(info) as member:
-                while chunk := member.read(min(64 * 1024, max_bytes - total + 1)):
-                    total += len(chunk)
-                    if total > max_bytes or time.monotonic() > deadline:
-                        raise ValidationError('Archive expansion exceeds budget')
-                    output.extend(chunk)
+            offset=info.header_offset
+            if offset<0 or offset+30>len(data) or data[offset:offset+4]!=b'PK\x03\x04':
+                raise ValidationError('Invalid ZIP local header')
+            flags,method=struct.unpack_from('<HH',data,offset+6)
+            name_size,extra_size=struct.unpack_from('<HH',data,offset+26)
+            start=offset+30+name_size+extra_size;end=start+info.compress_size
+            if (flags!=info.flag_bits or method!=info.compress_type or end>next_offset[offset]
+                or data[offset+30:offset+30+name_size]!=raw_name.encode('utf-8' if flags&0x800 else 'cp437')):
+                raise ValidationError('Inconsistent ZIP local payload')
+            if method not in {zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED}:
+                raise ValidationError('Unsupported ZIP compression')
+            output,checksum=bytearray(),0
+            inflater=zlib.decompressobj(-15) if method==zipfile.ZIP_DEFLATED else None
+            for position in range(start,end,64*1024):
+                compressed=data[position:min(end,position+64*1024)]
+                while compressed:
+                    if time.monotonic()>deadline:
+                        raise ValidationError('Archive inspection timed out')
+                    if inflater is None:
+                        chunk,compressed=compressed,b''
+                    else:
+                        chunk=inflater.decompress(compressed,min(64*1024,max_bytes-total+1))
+                        compressed=inflater.unconsumed_tail
+                        if inflater.unused_data:
+                            raise ValidationError('Trailing ZIP compressed payload')
+                    total+=len(chunk);output.extend(chunk);checksum=zlib.crc32(chunk,checksum)
+                    if total>max_bytes:
+                        raise ValidationError('Archive expansion exceeds actual byte budget')
+            if (inflater is not None and not inflater.eof) or len(output)!=info.file_size or checksum!=info.CRC:
+                raise ValidationError('ZIP physical payload differs from directory')
+            if info.is_dir():
+                if output:
+                    raise ValidationError('ZIP directory contains hidden content')
+                continue
             if not output:
                 raise ValidationError('Empty archive member')
             contents.append((info.filename, bytes(output)))
@@ -152,18 +182,32 @@ def _zip(data, deadline, max_bytes):
 def detect(data, name):
     if data.startswith(b'%PDF-'):
         return 'application/pdf', 'inspection_available'
+    if data.lstrip().startswith(b'{\\rtf'):
+        return 'application/rtf', 'adapter_unavailable'
     if data.startswith(b'Rar!'):
         return 'application/vnd.rar', 'adapter_unavailable'
     if data.startswith(b'7z\xbc\xaf\x27\x1c'):
         return 'application/x-7z-compressed', 'adapter_unavailable'
     if data.startswith(b'\xd0\xcf\x11\xe0'):
         return 'application/x-ole-storage', 'adapter_unavailable'
+    unavailable={'.dxf':'image/vnd.dxf','.dwg':'image/vnd.dwg','.svg':'image/svg+xml',
+        '.rtf':'application/rtf','.doc':'application/msword','.xls':'application/vnd.ms-excel',
+        '.html':'text/html','.htm':'text/html','.jpg':'image/jpeg','.jpeg':'image/jpeg',
+        '.png':'image/png','.tif':'image/tiff','.tiff':'image/tiff','.bmp':'image/bmp',
+        '.webp':'image/webp','.heic':'image/heic'}
+    suffix='.'+name.rsplit('.',1)[-1].lower() if '.' in name else ''
+    if suffix in unavailable:
+        return unavailable[suffix], 'adapter_unavailable'
     try:
         text = data.decode('utf-8-sig')
         if all(ord(c) >= 32 or c in '\t\n\r' for c in text):
-            return 'text/plain', 'inspection_available'
+            return ('text/csv' if name.lower().endswith('.csv') else 'text/plain'), 'inspection_available'
     except UnicodeError:
         pass
+    # These extensions are only inert adapter hints. Decoding and validation
+    # happen in the isolated reader under the explicit encoding profile.
+    if name.lower().endswith(('.txt','.csv')):
+        return ('text/csv' if name.lower().endswith('.csv') else 'text/plain'), 'inspection_available'
     return 'application/octet-stream', 'adapter_unavailable'
 
 
@@ -192,6 +236,12 @@ def prepare_files(files, *, max_files=20, max_bytes=50_000_000):
             # Office ZIP containers are documents; internal expansion is bounded
             # and validated before any office parser sees their original bytes.
             office = None
+            odf = next((payload.decode('ascii') for part,payload in members if part=='mimetype'
+                and payload in {b'application/vnd.oasis.opendocument.text',b'application/vnd.oasis.opendocument.spreadsheet',
+                    b'application/vnd.oasis.opendocument.presentation'}),None)
+            if odf:
+                batch.leaves.append(InputFile(full_path,name,data,odf,'adapter_unavailable'))
+                return
             if '[Content_Types].xml' in member_names:
                 if 'word/document.xml' in member_names:
                     office = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -199,8 +249,16 @@ def prepare_files(files, *, max_files=20, max_bytes=50_000_000):
                     office = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 elif 'ppt/presentation.xml' in member_names:
                     office = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            if office is None:
+                extension_mimes={'.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.odt':'application/vnd.oasis.opendocument.text','.ods':'application/vnd.oasis.opendocument.spreadsheet',
+                    '.odp':'application/vnd.oasis.opendocument.presentation'}
+                suffix='.'+path.rsplit('.',1)[-1].lower() if '.' in path else ''
+                office=extension_mimes.get(suffix)
             if office:
-                batch.leaves.append(InputFile(full_path, name, data, office, 'inspection_available'))
+                support='adapter_unavailable' if office.startswith('application/vnd.oasis.') else 'inspection_available'
+                batch.leaves.append(InputFile(full_path, name, data, office, support))
             else:
                 if depth >= 3 or not members:
                     raise ValidationError('Archive depth or empty archive limit')

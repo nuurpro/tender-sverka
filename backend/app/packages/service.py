@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from app.workspace.database import tenant_transaction
 from app.workspace.models import (Document, DocumentKeyEnvelope, Membership, Organization, PackageInspection,
-    PackageRevision, Participant, Project, UploadAttempt, UploadIntent, User, utcnow)
+    PackageRevision, Participant, Project, UploadAttempt, UploadIntent, User, NormalizedArtifact, utcnow)
 from app.workspace.repository import Repository, Conflict, NotFound, ValidationError, canonical_json
 from .crypto import AuthenticationFailure, EnvelopeCipher
 from .storage import S3Store, StorageUnavailable
@@ -26,7 +26,7 @@ DOCUMENT_FIELDS = ('id','name','relative_path','size','mime_type','file_hash','p
 def format_support(mime,role='document'):
     if role=='archive':
         return 'provenance'
-    if mime in {'application/pdf','text/plain',
+    if mime in {'application/pdf','text/plain','text/csv',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}:
         return 'inspection_available'
@@ -69,8 +69,11 @@ def package_detail(db, repo, package):
 
 
 class PackageService:
-    def __init__(self, engine, settings, store=None, cipher=None, *, clock=utcnow):
+    def __init__(self, engine, settings, store=None, cipher=None, *, clock=utcnow, inspection_readiness=None):
+        if inspection_readiness is not None and settings.environment!='test':
+            raise ValueError('Inspection adapter injection requires the explicit test environment')
         self.engine, self.settings, self.store, self.cipher, self.clock = engine, settings, store, cipher, clock
+        self.inspection_readiness=inspection_readiness
 
     def _configured(self):
         if self.cipher is None:
@@ -91,6 +94,10 @@ class PackageService:
             raise ValidationError('Tender has no participant; bid requires participant')
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 255 or any(ord(c)<32 for c in idempotency_key):
             raise ValidationError('Idempotency-Key is required')
+        with authorized(self.engine,org,actor,project,mutate=True) as (_,repo):
+            language=repo._get(Project,project).report_language
+        from .inspection import inspection_profile
+        frozen_inspection=inspection_profile(self.settings,language,readiness=self.inspection_readiness)
         file_inputs = sorted([{'path':f.path,'name':f.name,'hash':f.file_hash,'size':len(f.data),'role':f.role}
                               for f in batch.leaves + batch.containers],key=lambda v:v['path'])
         digest = hashlib.sha256(canonical_json({'kind':kind,'participant_id':participant,'files':file_inputs}).encode()).hexdigest()
@@ -153,7 +160,8 @@ class PackageService:
                 raise ValidationError('Upload cancelled')
             if refresh_auth:
                 refresh_auth()  # Fresh session check after slow storage, before tenant transaction.
-            result=self._finalize(org,actor,project,kind,participant,batch,intent_id,attempt_id,token,cancelled=cancelled)
+            result=self._finalize(org,actor,project,kind,participant,batch,intent_id,attempt_id,token,cancelled=cancelled,
+                frozen_inspection=frozen_inspection)
             if refresh_auth:
                 refresh_auth()
             self.authorize(org,actor,project,mutate=True)
@@ -173,7 +181,7 @@ class PackageService:
     def _scope(org,project,document):
         return {'organization_id':org,'project_id':project,'document_id':document,'object_kind':'original'}
 
-    def _finalize(self,org,actor,project,kind,participant,batch,intent_id,attempt_id,token,*,cancelled=None):
+    def _finalize(self,org,actor,project,kind,participant,batch,intent_id,attempt_id,token,*,cancelled=None,frozen_inspection=None):
         with authorized(self.engine,org,actor,project,mutate=True) as (db,repo):
             repo._get(Project,project,lock=True)
             intent = repo._get(UploadIntent,intent_id,lock=True)
@@ -207,10 +215,9 @@ class PackageService:
                 db.add(DocumentKeyEnvelope(organization_id=org,project_id=project,package_id=package.id,
                     document_id=obj['id'],master_key_version=envelope['master_key_version'],envelope=envelope))
             db.flush()
-            from .inspection import inspection_profile
             job = repo.create_job('package.inspect',project,{'package_id':package.id,'manifest_hash':
                 hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
-                'inspection_profile':inspection_profile(self.settings,repo._get(Project,project).report_language)},f'package-inspect:{package.id}')
+                'actor_id':actor,'inspection_profile':frozen_inspection},f'package-inspect:{package.id}')
             response = {'package':package_detail(db,repo,package),'inspection_job_id':job.id}
             repo._audit('package.uploaded',package,project_id=project,after={'id':package.id,'version':package.version,'accounting':manifest['accounting']})
             attempt.status='committed'; intent.package_id=package.id; intent.response=response
@@ -247,6 +254,7 @@ class PackageService:
                         raise StorageUnavailable()
                 keys=[obj['object_key'] for obj in attempt.objects]
                 references=db.scalar(select(func.count()).select_from(Document).where(Document.organization_id==org,Document.object_key.in_(keys)))
+                references+=db.scalar(select(func.count()).select_from(NormalizedArtifact).where(NormalizedArtifact.organization_id==org,NormalizedArtifact.object_key.in_(keys)))
                 if references:
                     return None  # Fail closed even if inconsistent intent state.
                 attempt.status='abandoned'

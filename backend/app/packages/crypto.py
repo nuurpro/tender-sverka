@@ -20,7 +20,9 @@ class AuthenticationFailure(Exception):
 
 
 def context(scope):
-    if set(scope) != {'organization_id', 'project_id', 'document_id', 'object_kind'} or any(
+    shapes = ({'organization_id', 'project_id', 'document_id', 'object_kind'},
+              {'organization_id', 'project_id', 'artifact_id', 'object_kind'})
+    if set(scope) not in shapes or any(
         not isinstance(v, str) or not v or len(v) > 64 for v in scope.values()
     ):
         raise AuthenticationFailure()

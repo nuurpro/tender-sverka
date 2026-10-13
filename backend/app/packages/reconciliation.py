@@ -27,6 +27,8 @@ class UploadReconciler:
             raise ValueError('Reconciliation adapter injection requires the explicit test environment')
         self.engine,self.settings,self.clock=engine,settings,clock
         self.packages=packages or PackageService(engine,settings)
+        from app.documents.service import DocumentService
+        self.documents=DocumentService(engine,settings,packages=self.packages)
         self.cursor=None
         self.backoff={}
 
@@ -49,6 +51,7 @@ class UploadReconciler:
             attempted+=1
             try:
                 self.packages.reconcile(org,limit=attempt_limit)
+                self.documents.reconcile(org,limit=attempt_limit)
                 self.backoff.pop(org,None)
             except Exception:
                 failed+=1

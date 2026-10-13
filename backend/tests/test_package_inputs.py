@@ -4,6 +4,59 @@ import zipfile
 
 import pytest
 
+
+def test_csv_rtf_and_odf_remain_distinct_native_or_pending_leaf_originals():
+    from app.packages.inputs import prepare_files
+    from io import BytesIO
+    import zipfile
+    csv = prepare_files([('data.csv',b'a,b\n1,2\n')]).leaves[0]
+    assert csv.mime_type == 'text/csv'
+    rtf = prepare_files([('renamed.txt',br'{\rtf1\ansi original text}')]).leaves[0]
+    assert rtf.mime_type == 'application/rtf' and rtf.support == 'adapter_unavailable'
+    output = BytesIO()
+    with zipfile.ZipFile(output,'w') as archive:
+        archive.writestr('mimetype','application/vnd.oasis.opendocument.text')
+        archive.writestr('content.xml','<document>original content</document>')
+    batch = prepare_files([('source.odt',output.getvalue())])
+    assert len(batch.leaves)==1 and not batch.containers
+    assert batch.leaves[0].data == output.getvalue()
+    assert batch.leaves[0].mime_type == 'application/vnd.oasis.opendocument.text'
+    assert batch.leaves[0].support == 'adapter_unavailable'
+
+
+def test_ascii_drawings_and_malformed_office_zip_are_not_plain_text_evidence():
+    from app.packages.inputs import prepare_files
+    from io import BytesIO
+    import zipfile
+    drawing=prepare_files([('drawing.dxf',b'0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n')]).leaves[0]
+    assert drawing.support=='adapter_unavailable' and drawing.mime_type!='text/plain'
+    stream=BytesIO()
+    with zipfile.ZipFile(stream,'w') as archive:
+        archive.writestr('unrecognized.xml','<document>incomplete office package</document>')
+    original=prepare_files([('incomplete.docx',stream.getvalue())])
+    assert len(original.leaves)==1 and not original.containers
+    assert original.leaves[0].data==stream.getvalue()
+
+
+@pytest.mark.parametrize('budget',[1000,1000000])
+def test_forged_zip_size_and_prefix_crc_cannot_truncate_an_original_member(budget):
+    from io import BytesIO
+    import struct,zipfile,zlib
+    from app.packages.inputs import prepare_files
+    from app.workspace.repository import ValidationError
+    original=b'original prefix '+b'x'*100000
+    stream=BytesIO()
+    with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('a.txt',original)
+    forged=bytearray(stream.getvalue());prefix=512;crc=zlib.crc32(original[:prefix])
+    central=forged.index(b'PK\x01\x02')
+    for offset in (14,central+16):
+        struct.pack_into('<I',forged,offset,crc)
+    for offset in (22,central+24):
+        struct.pack_into('<I',forged,offset,prefix)
+    with pytest.raises(ValidationError):
+        prepare_files([('forged.zip',bytes(forged))],max_bytes=budget)
+
 from app.workspace.repository import ValidationError
 
 

@@ -26,17 +26,17 @@ evidence, not a smaller definition of completion.
 | ID | Deliverable | Current evidence/state |
 |---|---|---|
 | F01 | Organizations, phone OTP, sessions, roles, platform OIDC | Auth/roles/API verified; authorized dev mock 123456; production SMS/OIDC pending |
-| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository/API/RLS and original downloads verified; full search/cache isolation pending |
+| F02 | Tenant/project/participant isolation including search, cache and downloads | Repository/API/RLS, original/artifact downloads and native-parser cache isolation verified; full search/extraction/comparison caches pending |
 | F03 | Dashboard, lots, deadlines, supplier and buyer modes | Dashboard/project creation/deadline/report language/modes verified; lot integrations pending |
 | F04 | Immutable tender/bid revisions and source originals | Encrypted immutable uploads/history/original downloads verified on actual PG/private S3 |
 | F05 | PostgreSQL schema, Alembic, FORCE RLS with restricted application role | Foundation + migration/startup role checks verified on PG14; PG18 deployment pending |
-| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Substrate/API + real package inspection verified; extraction/OCR/comparison stages pending |
+| F06 | Durable jobs, transactional outbox, leases, retry/cancel and SSE progress | Substrate/API, isolated native inspection/normalization and artifact retry history verified; extraction/OCR/comparison stages pending |
 | F07 | Idempotent mutations and optimistic edit conflicts | Checklist/job/HTTP retry-cancel/upload replay verified; remaining mutations/stages pending |
 | F08 | 20 files/50 MB, expanded archives, page/token/context/budget preflight | Actual wire/logical/expanded ZIP limits and known PDF page probes verified; full counts/token/context/run budgets pending |
-| F09 | PDF text/scans, DOC/DOCX/RTF/ODT/TXT | MVP text PDF/DOCX only |
-| F10 | XLS/XLSX/ODS/CSV, merged cells and safe formula values | MVP XLSX only; formulas excluded |
+| F09 | PDF text/scans, DOC/DOCX/RTF/ODT/TXT | Isolated native text PDF/DOCX/TXT evidence and pending embedded coverage verified; scans/DOC/RTF/ODT conversion pending |
+| F10 | XLS/XLSX/ODS/CSV, merged cells and safe formula values | Isolated XLSX/CSV, sparse/merged cells, exact CSV records and raw formula/cache review verified; XLS/ODS conversion and accepted formula values pending |
 | F11 | JPG/PNG/TIFF/HEIC/BMP/WEBP, phone photos and multipage TIFF | Pending |
-| F12 | ZIP/RAR/7Z, preserved folders and safe bounded extraction | Bounded ZIP/directory validation/folders/originals verified; RAR/7Z pending |
+| F12 | ZIP/RAR/7Z, preserved folders and safe bounded extraction | Bounded ZIP physical-output/CRC/path validation, folders and originals verified; isolated ZIP admission and RAR/7Z pending |
 | F13 | Pasted text and authorized lot-link import | Pending |
 | F14 | Document-type classification and manual correction | Pending |
 | F15 | OCR, layout, dewarp/rotation, tables across pages, handwriting | Pending |
@@ -51,8 +51,8 @@ evidence, not a smaller definition of completion.
 | F24 | Internal bid conflicts, validity at tender deadline and model matching | Pending |
 | F25 | Deterministic Decimal numeric/unit/date/set rules | Pending |
 | F26 | Semantic and multilingual comparison, equivalence and review routing | MVP basic LLM comparison only |
-| F27 | Exact evidence from both packages, coordinates, translations and viewer | MVP exact text + page/row only |
-| F28 | Verified missing evidence vs unsupported claim; incomplete coverage -> review | Pending |
+| F27 | Exact evidence from both packages, coordinates, translations and viewer | Native original text/page/part/cell anchors and authenticated source APIs verified; AI citations/translations/viewer pending |
+| F28 | Verified missing evidence vs unsupported claim; incomplete coverage -> review | Native unknown/embedded/failed coverage stays explicitly pending; requirement-level missing-evidence/claim evaluation pending |
 | F29 | Five bids compared independently with consistent snapshots | MVP three bids only |
 | F30 | Overall/product/participant/category/item scores, counts and intervals | MVP overall score only |
 | F31 | Risk for mandatory failure; readiness requires all mandatory green | MVP risk; full verdict pending |
@@ -67,16 +67,21 @@ evidence, not a smaller definition of completion.
 | F40 | RU/UZ/EN interface and selected report language; original quotes retained | MVP Russian only |
 | F41 | Project chat restricted to authorized versioned uploaded sources | Pending |
 | F42 | Snapshot-consistent PDF, XLSX, DOCX and JSON/API exports | MVP XLSX only |
-| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Versioned tenant/package inspection identity/checkpoint reuse verified; full content caches pending |
+| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Frozen native profiles, project/tenant/source-qualified parser reuse and current-original binding verified; extraction/comparison caches pending |
 | F44 | Gateway capability profiles, budgets, bounded failure recovery | MVP chat/responses adapter only |
-| F45 | Reproducibility via snapshots/cache and explicit new evaluation runs | Pending |
-| F46 | TLS, AES-256 at rest, retention (12 months), deletion incl. derived data | AES-256 authenticated originals verified; derivatives/DB volumes/TLS/rotation/retention/deletion pending |
+| F45 | Reproducibility via snapshots/cache and explicit new evaluation runs | Native code/runtime/policy/options snapshots and explicit reprocessing verified; extraction/comparison snapshots pending |
+| F46 | TLS, AES-256 at rest, retention (12 months), deletion incl. derived data | AES-256 authenticated originals/normalized artifacts verified; further derivatives/DB volumes/TLS/rotation/retention/deletion pending |
 | F47 | TenderZone/TenderGPT lot/SSO/commission integrations | Pending; external contracts required |
 | F48 | Company/bad-performer/license registry checks with as-of provenance | Pending; external contracts required |
 | F49 | Dictionaries, templates, types, policy and provider administration | Pending |
 | F50 | Observability, backup/restore, redundant services and availability | Pending |
 
 ## Acceptance gates (not satisfied by synthetic demo documents)
+
+The user confirmed that no ready real-document corpus is available. Continue
+implementation with clearly labelled synthetic fixtures; real quality gates
+remain pending. `expert-corpus.md` and `expert-case.template.json` define the
+collection/annotation handoff, not measured acceptance results.
 
 - Expert-annotated 20–30 real tenders covering goods/works/services, RU/UZ/EN,
   scans/photos/tables/drawings. Keep a held-out acceptance split.
@@ -217,3 +222,41 @@ evidence, not a smaller definition of completion.
   its objects, and continue bounded cleanup of otherwise valid attempts. API
   uploads generate valid immutable ownership records; this observation does
   not establish a current external deletion or access bypass.
+- Task 4a is implementing native normalized evidence, immutable encrypted
+  artifacts and authenticated source APIs. Root exercised the actual non-root
+  WSL/bubblewrap fault suite (41 tests passed) and re-staged the later MIME
+  correction; the updated real runner probe and public-text parsing passed with
+  nine material runtime identities. The production path has no host parser
+  fallback. OCR/conversion/CAD and model tokenization remain later gates.
+- Root task-4 client checks passed 13 API tests, 5 DOM tests, TypeScript and the
+  optimized build; bootstrap/staging checks passed 20 tests. These are client
+  methods, not the still-pending source-viewer UI. Artifact retry recovery and
+  actual PostgreSQL/S3 acceptance are in progress; independent task-4a review
+  has not yet passed.
+- Root full task-4a verification passed **351 backend tests**, zero skips,
+  against actual PostgreSQL/RabbitMQ/S3/WSL; current frontend 13 API + 5 DOM,
+  TypeScript and optimized build also passed. Independent specification review
+  nevertheless reproduced two blocking coverage gaps through the actual runner:
+  PDF catalog attachments and unknown XLSX cell XML were incorrectly reported
+  as fully covered. Task 4a remains unapproved while those gaps are corrected.
+  The reviewer independently passed 60 actual focused tests and additionally
+  verified process and aggregate temporary-filesystem resource limits.
+- Specification re-review passed after bounded PDF Names/associated-file
+  coverage and recursive unknown spreadsheet-content guards were added. Root
+  passed 43 reader unit cases and four actual WSL coverage regressions. Quality
+  review independently verified actual PG/S3 publication/retry/authorization,
+  but identified CSV Unicode record-boundary corruption and stale DOCX vertical
+  merge origins across a missing row. Both are required corrections before
+  quality approval or task-4a commit; the earlier green suites are not approval.
+- Task 4a passed specification and quality re-review after all confirmed source
+  integrity corrections. Root final actual verification passed **390 backend
+  tests**, zero skips, with PostgreSQL/RabbitMQ/private S3/WSL enabled. Root also
+  independently exercised seven actual CSV/DOCX regression cases; the quality
+  reviewer reran six original/variant WSL fixtures, preserving CSV source bytes,
+  rejecting broken merges and retaining valid adjacent merge anchors.
+- Native evidence, encrypted artifacts, versioned retry history, scoped source
+  APIs and the client SDK are complete within the task-4a contract. Full document
+  support is not complete: ZIP admission still needs OS isolation, and conversion,
+  OCR/layout/handwriting, CAD, external AI budgets, the full workflow UI and all
+  remaining F01–F50 acceptance gates continue. Mock SMS remains fixed `123456`,
+  with no real provider connected; no real expert corpus is available yet.

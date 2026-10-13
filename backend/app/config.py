@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     max_package_tokens: int = Field(default=250_000, ge=1, le=250_000)
     document_encryption_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices("DOCUMENT_ENCRYPTION_KEY", "document_encryption_key"))
     document_master_key_version: str = Field(default="v1", pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
+    document_runner_mode: Literal["disabled", "bubblewrap", "wsl-bubblewrap"] = Field(default="disabled", validation_alias=AliasChoices("DOCUMENT_RUNNER_MODE", "APP_DOCUMENT_RUNNER_MODE", "document_runner_mode"))
+    document_runtime_python: str = Field(default="/home/acer/.local/share/tender-sverka/document-runtime/bin/python", validation_alias=AliasChoices("DOCUMENT_RUNTIME_PYTHON", "APP_DOCUMENT_RUNTIME_PYTHON", "document_runtime_python"))
+    document_parser_code_path: str = Field(default="/home/acer/.local/share/tender-sverka/document-parser/app/documents", validation_alias=AliasChoices("DOCUMENT_PARSER_CODE_PATH", "APP_DOCUMENT_PARSER_CODE_PATH", "document_parser_code_path"))
+    document_wsl_distribution: str = Field(default="Ubuntu", pattern=r"^[a-zA-Z0-9_.-]{1,80}$", validation_alias=AliasChoices("DOCUMENT_WSL_DISTRIBUTION", "APP_DOCUMENT_WSL_DISTRIBUTION", "document_wsl_distribution"))
+    document_runner_timeout_seconds: float = Field(default=30, ge=0.1, le=120, validation_alias=AliasChoices("DOCUMENT_RUNNER_TIMEOUT_SECONDS", "APP_DOCUMENT_RUNNER_TIMEOUT_SECONDS", "document_runner_timeout_seconds"))
+    document_runner_cpu_seconds: int = Field(default=20, ge=1, le=60, validation_alias=AliasChoices("DOCUMENT_RUNNER_CPU_SECONDS", "APP_DOCUMENT_RUNNER_CPU_SECONDS", "document_runner_cpu_seconds"))
+    document_runner_memory_bytes: int = Field(default=805_306_368, ge=67_108_864, le=1_073_741_824, validation_alias=AliasChoices("DOCUMENT_RUNNER_MEMORY_BYTES", "APP_DOCUMENT_RUNNER_MEMORY_BYTES", "document_runner_memory_bytes"))
+    document_runner_process_limit: int = Field(default=32, ge=4, le=64, validation_alias=AliasChoices("DOCUMENT_RUNNER_PROCESS_LIMIT", "APP_DOCUMENT_RUNNER_PROCESS_LIMIT", "document_runner_process_limit"))
+    document_runner_file_limit: int = Field(default=64, ge=16, le=128, validation_alias=AliasChoices("DOCUMENT_RUNNER_FILE_LIMIT", "APP_DOCUMENT_RUNNER_FILE_LIMIT", "document_runner_file_limit"))
+    document_runner_file_bytes: int = Field(default=16_777_216, ge=1024, le=16_777_216, validation_alias=AliasChoices("DOCUMENT_RUNNER_FILE_BYTES", "APP_DOCUMENT_RUNNER_FILE_BYTES", "document_runner_file_bytes"))
+    document_runner_output_bytes: int = Field(default=16_777_216, ge=1024, le=16_777_216, validation_alias=AliasChoices("DOCUMENT_RUNNER_OUTPUT_BYTES", "APP_DOCUMENT_RUNNER_OUTPUT_BYTES", "document_runner_output_bytes"))
     s3_endpoint_url: str | None = Field(default=None, validation_alias=AliasChoices("S3_ENDPOINT_URL", "s3_endpoint_url"))
     s3_region: str = Field(default="garage", validation_alias=AliasChoices("S3_REGION", "s3_region"))
     s3_bucket: str | None = Field(default=None, validation_alias=AliasChoices("S3_BUCKET", "s3_bucket"))
@@ -53,6 +64,20 @@ class Settings(BaseSettings):
     max_buyer_participants: Literal[5] = 5
     max_supplier_participants: Literal[1] = 1
     retention_months: int = Field(default=12, ge=1)
+
+    @field_validator("document_runtime_python", "document_parser_code_path")
+    @classmethod
+    def validate_document_runtime_path(cls, value: str, info) -> str:
+        from pathlib import PurePosixPath
+        path = PurePosixPath(value)
+        if not value.startswith("/") or "\\" in value or "\x00" in value or ".." in path.parts or str(path) != value:
+            raise ValueError("document runtime paths must be canonical absolute Linux paths")
+        if info.field_name == "document_runtime_python":
+            if path.name not in {"python", "python3"} or path.parent.name != "bin" or len(path.parts) < 5:
+                raise ValueError("document Python must be in a dedicated Linux virtual environment")
+        elif path.name != "documents" or len(path.parts) < 5:
+            raise ValueError("document parser path must be a dedicated documents-only directory")
+        return value
 
     @field_validator("gateway_api_base")
     @classmethod
