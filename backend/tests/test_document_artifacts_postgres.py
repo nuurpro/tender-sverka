@@ -24,7 +24,7 @@ def actual_documents(actual_packages):
     if not mode:
         pytest.skip('Explicit actual OS document runner acceptance configuration required')
     changes={'document_runner_mode':mode}
-    for key in ('document_runtime_python','document_parser_code_path','document_wsl_distribution'):
+    for key in ('document_runtime_python', 'document_runtime_python_sha256','document_parser_code_path','document_wsl_distribution'):
         if value:=os.environ.get('WORKSPACE_TEST_'+key.upper()):
             changes[key]=value
     settings=packages.settings.model_copy(update=changes)

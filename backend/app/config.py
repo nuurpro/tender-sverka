@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     document_master_key_version: str = Field(default="v1", pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
     document_runner_mode: Literal["disabled", "bubblewrap", "wsl-bubblewrap"] = Field(default="disabled", validation_alias=AliasChoices("DOCUMENT_RUNNER_MODE", "APP_DOCUMENT_RUNNER_MODE", "document_runner_mode"))
     document_runtime_python: str = Field(default="/home/acer/.local/share/tender-sverka/document-runtime/bin/python", validation_alias=AliasChoices("DOCUMENT_RUNTIME_PYTHON", "APP_DOCUMENT_RUNTIME_PYTHON", "document_runtime_python"))
+    document_runtime_python_sha256: str = Field(default='', pattern=r'^(?:|[0-9a-f]{64})$', validation_alias=AliasChoices('DOCUMENT_RUNTIME_PYTHON_SHA256','APP_DOCUMENT_RUNTIME_PYTHON_SHA256','document_runtime_python_sha256'))
     document_parser_code_path: str = Field(default="/home/acer/.local/share/tender-sverka/document-parser/app/documents", validation_alias=AliasChoices("DOCUMENT_PARSER_CODE_PATH", "APP_DOCUMENT_PARSER_CODE_PATH", "document_parser_code_path"))
     document_wsl_distribution: str = Field(default="Ubuntu", pattern=r"^[a-zA-Z0-9_.-]{1,80}$", validation_alias=AliasChoices("DOCUMENT_WSL_DISTRIBUTION", "APP_DOCUMENT_WSL_DISTRIBUTION", "document_wsl_distribution"))
     document_runner_timeout_seconds: float = Field(default=30, ge=0.1, le=120, validation_alias=AliasChoices("DOCUMENT_RUNNER_TIMEOUT_SECONDS", "APP_DOCUMENT_RUNNER_TIMEOUT_SECONDS", "document_runner_timeout_seconds"))
@@ -55,6 +56,14 @@ class Settings(BaseSettings):
     document_runner_file_limit: int = Field(default=64, ge=16, le=128, validation_alias=AliasChoices("DOCUMENT_RUNNER_FILE_LIMIT", "APP_DOCUMENT_RUNNER_FILE_LIMIT", "document_runner_file_limit"))
     document_runner_file_bytes: int = Field(default=16_777_216, ge=1024, le=16_777_216, validation_alias=AliasChoices("DOCUMENT_RUNNER_FILE_BYTES", "APP_DOCUMENT_RUNNER_FILE_BYTES", "document_runner_file_bytes"))
     document_runner_output_bytes: int = Field(default=16_777_216, ge=1024, le=16_777_216, validation_alias=AliasChoices("DOCUMENT_RUNNER_OUTPUT_BYTES", "APP_DOCUMENT_RUNNER_OUTPUT_BYTES", "document_runner_output_bytes"))
+    document_ocr_mode: Literal['disabled','tesseract'] = 'disabled'
+    document_ocr_max_frame_pixels: int = Field(default=12_000_000, ge=1, le=40_000_000)
+    document_ocr_max_total_pixels: int = Field(default=2_000_000_000, ge=1, le=4_000_000_000)
+    document_ocr_max_raster_pixels: int = Field(default=8_000_000, ge=1, le=12_000_000)
+    document_ocr_raster_dpi: int = Field(default=200, ge=72, le=300)
+    document_ocr_page_segmentation: Literal[3,6,11] = 3
+    document_ocr_low_confidence_review: float = Field(default=85., ge=0., le=100.)
+    document_ocr_document_seconds: float = Field(default=3600., ge=1., le=7200.)
     s3_endpoint_url: str | None = Field(default=None, validation_alias=AliasChoices("S3_ENDPOINT_URL", "s3_endpoint_url"))
     s3_region: str = Field(default="garage", validation_alias=AliasChoices("S3_REGION", "s3_region"))
     s3_bucket: str | None = Field(default=None, validation_alias=AliasChoices("S3_BUCKET", "s3_bucket"))
@@ -64,6 +73,11 @@ class Settings(BaseSettings):
     max_buyer_participants: Literal[5] = 5
     max_supplier_participants: Literal[1] = 1
     retention_months: int = Field(default=12, ge=1)
+
+    @field_validator('document_ocr_page_segmentation', mode='before')
+    @classmethod
+    def coerce_public_segmentation(cls,value):
+        return int(value) if isinstance(value,str) and value in {'3','6','11'} else value
 
     @field_validator("document_runtime_python", "document_parser_code_path")
     @classmethod

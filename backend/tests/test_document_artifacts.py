@@ -46,6 +46,24 @@ def execute(service, org, response):
     return job_id
 
 
+def test_normalization_enforces_cumulative_package_physical_pages_before_second_publication(packages):
+    from app.packages.inputs import prepare_files
+    from app.workspace.repository import ValidationError
+    from test_document_readers import pdf_fixture
+    service,actor,calls=processing(packages)
+    _,engine,_,_,org,project=packages
+    service.settings=service.settings.model_copy(update={'max_package_pages':1})
+    source=pdf_fixture()
+    original=service.packages.upload(org,actor,project,'tender',None,
+        prepare_files([('a.pdf',source),('b.pdf',source)]),'two-real-pages')['package']
+    response=service.start(org,actor,project,original['id'],'one-page-budget',{})
+    jobs=JobService(engine,org);claim=jobs.claim(response['job']['id'])
+    with pytest.raises(ValidationError,match='cumulative physical pages'):
+        service.handle(ExecutionContext(jobs,response['job']['id'],claim))
+    artifacts=service.artifacts(org,actor,project,original['id'],response['job']['id'])['artifacts']
+    assert len(artifacts)==1 and artifacts[0]['physical_pages']==1
+
+
 def test_disabled_normalization_is_explicit_and_does_not_queue(packages):
     client, engine, _, _, org, project = packages
     original = package(packages)

@@ -34,7 +34,7 @@ def inspection_profile(settings,language,*,readiness=None):
         native=processing_profile(settings,language,probe=(readiness or ensure_runner_available)(settings)).model_dump(mode='json')
     except DocumentRunnerError:
         pass  # Original upload does not depend on a running parser.
-    return {'policy':'inspection-v2-native','language':language,'model':'none','tokenizer':'pending',
+    return {'policy':'inspection-v3-ocr' if native and native['version']=='image-ocr-v2' else 'inspection-v2-native','language':language,'model':'none','tokenizer':'pending',
         'native_profile':native,'runner_status':'available' if native else 'unavailable',
         'options':{'text_probe':True,'max_pages':settings.max_package_pages,'max_tokens':settings.max_package_tokens}}
 
@@ -94,7 +94,7 @@ def inspection_handler(settings,*,packages=None,parser=None,readiness=None):
     if settings.environment!='test' and (parser is not None or readiness is not None):
         raise ValueError('Inspection adapter injection requires the explicit test environment')
     from app.documents.runner import run_document,ensure_runner_available,DocumentRunnerError
-    from app.documents.schemas import ParserProfile
+    from app.documents.schemas import parse_profile
     from app.documents.service import processing_profile
     from .service import authorized
     parser=parser or run_document
@@ -108,9 +108,10 @@ def inspection_handler(settings,*,packages=None,parser=None,readiness=None):
         frozen=context.payload.get('inspection_profile')
         if not isinstance(frozen,dict) or not frozen.get('native_profile'):
             raise ValidationError('Frozen inspection has no available isolated runner; start explicit normalization')
-        native=ParserProfile.model_validate(frozen['native_profile'])
+        native=parse_profile(frozen['native_profile'])
         actual=processing_profile(settings,native.language,{'encoding':native.encoding,'csv_delimiter':native.csv_delimiter},probe=readiness(settings))
-        if native!=actual or frozen['policy']!='inspection-v2-native':
+        expected_policy='inspection-v3-ocr' if native.version=='image-ocr-v2' else 'inspection-v2-native'
+        if native!=actual or frozen['policy']!=expected_policy:
             raise ValidationError('Inspection parser/policy changed; start a new explicit normalization')
         with authorized(service.engine,org,actor,project_id,mutate=True) as (db,repo):
             package=nested_package(repo,project_id,package_id)
@@ -144,7 +145,8 @@ def inspection_handler(settings,*,packages=None,parser=None,readiness=None):
             if normalized.physical_pages is None:
                 blockers.append('page_count_pending')
             results.append({'document_id':doc['id'],'page_count':normalized.physical_pages,'token_count':None,
-                'token_upper_bound':None,'text_probe_bytes':sum(len(block.original_text.encode()) for block in normalized.blocks),
+                'token_upper_bound':None,'text_probe_bytes':sum(len((block.original_text if hasattr(block,'original_text') else block.transcription_text).encode())
+                    for block in normalized.blocks if block.kind!='ocr_word'),
                 'coverage':'probe' if normalized.blocks else (unresolved[0] if unresolved else 'pending'),
                 'blockers':blockers,'warnings':list(normalized.warnings)})
         known_pages=sum(result['page_count'] for result in results if result['page_count'] is not None)
@@ -159,7 +161,7 @@ def inspection_handler(settings,*,packages=None,parser=None,readiness=None):
         pipeline.authorize(org,actor,project_id,mutate=True)
         def persist(writes):
             writes.add(PackageInspection(organization_id=org,project_id=project_id,package_id=package_id,
-                identity_hash=identity_hash,parser_version='inspection-v2-native',result=report))
+                identity_hash=identity_hash,parser_version=expected_policy,result=report))
         context.checkpoint('inspect',identity_hash,report,persist,progress=100)
     return handle
 

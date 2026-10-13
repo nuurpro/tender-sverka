@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from typing import TYPE_CHECKING, Callable
+from .bootstrap import PYTHON_FLAGS, SOURCE_ONLY_START, SOURCE_ONLY_DISPATCH, STARTUP_GUARD
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -27,7 +28,7 @@ class DocumentRunnerError(RuntimeError):
 
 # The trusted launcher lives in argv, outside the parser's mount namespace. The
 # one-byte ACK guarantees no parser starts before its process group is known.
-_SUPERVISOR = """import errno,json,os,resource,signal,sys
+_SUPERVISOR = SOURCE_ONLY_START + """import errno,json,os,resource,signal,sys
 limits=json.loads(sys.argv[1])
 try:
  os.setsid()
@@ -47,12 +48,12 @@ os.execv(sys.argv[2],sys.argv[2:])
 """
 _PID_PREFIX = b"DOCUMENT_RUNNER_PID:"
 _STDERR_LIMIT = 65_536
-_CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py")
+_CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py")
 
 # Apply the parser's process cap after Bubblewrap creates its trusted namespaces.
 # Linux charges namespace setup to ancestor user counters; a low pre-namespace
 # NPROC cap can prevent isolation from starting even though the parser is small.
-_SANDBOX_START = """import os,resource,sys
+_SANDBOX_START = SOURCE_ONLY_START + """import os,resource,sys
 limit=int(sys.argv[1])
 resource.setrlimit(resource.RLIMIT_NPROC,(limit,limit))
 os.execv(sys.argv[2],sys.argv[2:])
@@ -86,10 +87,14 @@ def _build_command(settings: Settings, *, probe: bool = False) -> tuple[list[str
                "--proc", "/proc", "--dev", "/dev", "--size", str(settings.document_runner_file_bytes), "--tmpfs", "/tmp",
                "--ro-bind", runtime_root, "/runtime", "--ro-bind", settings.document_parser_code_path,
                "/parser", "--chdir", "/tmp", "--setenv", "HOME", "/tmp", "--setenv", "TMPDIR", "/tmp",
-               "--setenv", "LANG", "C.UTF-8", "--", runtime_python, "-I", "-c", _SANDBOX_START,
-               str(settings.document_runner_process_limit), runtime_python, "-I"]
+               "--setenv", "LANG", "C.UTF-8", "--setenv", "OMP_THREAD_LIMIT", "1",
+               "--setenv", "OPENBLAS_NUM_THREADS", "1", "--", "/bin/sh", "-c", STARTUP_GUARD,
+               "document-startup-guard", "/runtime", settings.document_runtime_python_sha256,
+               runtime_python, *PYTHON_FLAGS, "-c", _SANDBOX_START,
+               str(settings.document_runner_process_limit), runtime_python, *PYTHON_FLAGS,
+               "-c", SOURCE_ONLY_START + SOURCE_ONLY_DISPATCH]
     if probe:
-        command += ["-c", _PROBE]
+        command += ["-c", _PROBE, 'ocr' if settings.document_ocr_mode=='tesseract' else 'native']
     else:
         command += ["/parser/entrypoint.py"]
     limits = {"RLIMIT_CPU": settings.document_runner_cpu_seconds,
@@ -97,7 +102,9 @@ def _build_command(settings: Settings, *, probe: bool = False) -> tuple[list[str
               "RLIMIT_NOFILE": settings.document_runner_file_limit,
               "RLIMIT_FSIZE": settings.document_runner_file_bytes, "RLIMIT_CORE": 0}
     prefix = _wsl_prefix(settings) if is_wsl else []
-    return prefix + ["/usr/bin/python3", "-I", "-c", _SUPERVISOR,
+    return prefix + ["/bin/sh", "-c", STARTUP_GUARD, "document-startup-guard",
+                     runtime_root, settings.document_runtime_python_sha256,
+                     "/usr/bin/python3", *PYTHON_FLAGS, "-c", _SUPERVISOR,
                      json.dumps(limits, separators=(",", ":"))] + command, is_wsl
 
 
@@ -111,13 +118,18 @@ try:
  raise AssertionError('network unexpectedly available')
 except OSError: pass
 finally: s.close()
-names=['__init__.py','entrypoint.py','readers.py','schemas.py']
+names=['__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py']
 assert {p.name for p in pathlib.Path('/parser').iterdir()} == set(names)
 assert all(pathlib.Path('/parser',n).is_file() and not pathlib.Path('/parser',n).is_symlink() for n in names)
 hashes={n:hashlib.sha256(pathlib.Path('/parser',n).read_bytes()).hexdigest() for n in names}
 versions={n:importlib.metadata.version(n) for n in ['pdfplumber','python-docx','openpyxl','pydantic','lxml','Pillow','pdfminer.six','pypdfium2']}
 versions['python']=sys.version
-print(json.dumps({'isolated':True,'runtime_versions':versions,'code_hash':hashlib.sha256(json.dumps(hashes,sort_keys=True,separators=(',',':')).encode()).hexdigest()}))
+result={'isolated':True,'runtime_versions':versions,'code_hash':hashlib.sha256(json.dumps(hashes,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+if sys.argv[1]=='ocr':
+ sys.path.insert(0,'/parser')
+ from toolchain import ocr_identity
+ result['ocr_toolchain']=ocr_identity()
+print(json.dumps(result))
 """
 
 
@@ -256,7 +268,8 @@ def ensure_runner_available(settings: Settings) -> dict:
         if result.get("isolated") is not True or result.get("code_hash") != parser_code_hash():
             raise ValueError("probe mismatch")
         command, is_wsl = _build_command(settings)
-        parser_probe = json.loads(_stream_process(command, b'{"probe":true}', settings, None, is_wsl, handshake=True))
+        probe_request=b'{"probe":true,"ocr":true}' if settings.document_ocr_mode=='tesseract' else b'{"probe":true}'
+        parser_probe = json.loads(_stream_process(command, probe_request, settings, None, is_wsl, handshake=True))
         if parser_probe != result:
             raise ValueError("parser probe mismatch")
         return result
@@ -272,6 +285,11 @@ def run_document(content: bytes, filename: str, mime_type: str, profile: ParserP
         raise DocumentRunnerError("runner_disabled", "Document isolation is disabled")
     if len(content) > settings.max_package_bytes or len(filename.encode()) > 2048 or len(mime_type.encode()) > 256:
         raise DocumentRunnerError("input_limit", "Document parser input exceeded its limit")
+    from .schemas import OCRProfile, OCRBlock, CoverageV2, parse_document
+    deadline=time.monotonic()+profile.limits.max_document_seconds if isinstance(profile,OCRProfile) else None
+    execution_settings=settings
+    if deadline is not None:
+        execution_settings=settings.model_copy(update={'document_runner_timeout_seconds':min(settings.document_runner_timeout_seconds,profile.limits.max_document_seconds)})
     profile_data = profile.model_dump(mode="json")
     if len(json.dumps(profile_data).encode()) > 16_384:
         raise DocumentRunnerError("input_limit", "Document parser profile exceeded its limit")
@@ -280,13 +298,96 @@ def run_document(content: bytes, filename: str, mime_type: str, profile: ParserP
                           "profile": profile_data}, separators=(",", ":"), ensure_ascii=True).encode()
     if len(request) > (settings.max_package_bytes + 2) // 3 * 4 + 32_768:
         raise DocumentRunnerError("input_limit", "Document parser request exceeded its limit")
-    command, is_wsl = _build_command(settings)
-    output = _stream_process(command, request, settings, cancelled, is_wsl, handshake=True)
-    from .schemas import NormalizedDocument
+    command, is_wsl = _build_command(execution_settings)
+    output = _stream_process(command, request, execution_settings, cancelled, is_wsl, handshake=True)
+    if deadline is not None and time.monotonic()>=deadline:
+        raise DocumentRunnerError('timeout','Document exceeded cumulative time policy')
     try:
-        document = NormalizedDocument.model_validate_json(output)
+        if isinstance(profile,OCRProfile):
+            result=json.loads(output)
+            if set(result)!={'document','manifest','cpu_seconds'}:
+                raise ValueError('OCR manifest protocol')
+            cpu_total=_cpu_usage(result['cpu_seconds'])
+            if cpu_total>profile.limits.max_document_cpu_seconds:
+                raise DocumentRunnerError('cpu_limit','Document CPU consumption exceeded frozen policy')
+            document=parse_document(result['document'])
+            manifest=result['manifest']
+            if manifest:
+                _validate_manifest(manifest,profile,document)
+                blocks=list(document.blocks); coverage=list(document.coverage)
+                estimate=len(document.model_dump_json().encode())
+                characters=sum(len(b.original_text) for b in blocks)
+                base_request=json.loads(request)
+                for frame in manifest['frames']:
+                    remaining=deadline-time.monotonic()
+                    if remaining<.1:
+                        raise DocumentRunnerError('timeout','OCR document exceeded cumulative time policy')
+                    chunk_request=json.dumps({**base_request,'frame':frame['frame']},separators=(',',':'),ensure_ascii=True).encode()
+                    chunk_settings=settings.model_copy(update={'document_runner_timeout_seconds':min(settings.document_runner_timeout_seconds,remaining)})
+                    cpu_remaining=profile.limits.max_document_cpu_seconds-cpu_total
+                    if cpu_remaining<.1:
+                        raise DocumentRunnerError('cpu_limit','Document CPU consumption exceeded frozen policy')
+                    import math
+                    chunk_settings=chunk_settings.model_copy(update={'document_runner_cpu_seconds':min(settings.document_runner_cpu_seconds,max(1,math.ceil(cpu_remaining)))})
+                    command,is_wsl=_build_command(chunk_settings)
+                    chunk_output=_stream_process(command,chunk_request,chunk_settings,cancelled,is_wsl,handshake=True)
+                    if time.monotonic()>=deadline:
+                        raise DocumentRunnerError('timeout','OCR document exceeded cumulative time policy')
+                    chunk=json.loads(chunk_output)
+                    if set(chunk)!={'frame','blocks','coverage','cpu_seconds'} or chunk['frame']!=frame['frame']:
+                        raise ValueError('OCR chunk protocol')
+                    cpu_total+=_cpu_usage(chunk['cpu_seconds'])
+                    if cpu_total>profile.limits.max_document_cpu_seconds:
+                        raise DocumentRunnerError('cpu_limit','Document CPU consumption exceeded frozen policy')
+                    estimate+=len(chunk_output)
+                    if estimate>profile.limits.max_output_bytes:
+                        raise DocumentRunnerError('output_limit','Cumulative OCR output exceeded policy')
+                    words=tuple(OCRBlock.model_validate_json(json.dumps(b)) for b in chunk['blocks'])
+                    entries=tuple(CoverageV2.model_validate_json(json.dumps(c)) for c in chunk['coverage'])
+                    if any(b.anchor.frame!=frame['frame'] or b.anchor.source_sha256!=document.content_sha256 for b in words):
+                        raise ValueError('OCR frame/source mismatch')
+                    characters+=sum(len(b.transcription_text) for b in words)
+                    if len(blocks)+len(words)>profile.limits.max_blocks or len(coverage)+len(entries)>profile.limits.max_blocks*4 or characters>profile.limits.max_text_chars:
+                        raise DocumentRunnerError('output_limit','Cumulative OCR evidence exceeded policy')
+                    blocks.extend(words);coverage.extend(entries)
+                document=parse_document({**document.model_dump(mode='json'),'blocks':[b.model_dump(mode='json') for b in blocks],
+                    'coverage':[c.model_dump(mode='json') for c in coverage],'status':'partial'})
+                if len(document.model_dump_json().encode())>profile.limits.max_output_bytes:
+                    raise DocumentRunnerError('output_limit','Cumulative OCR output exceeded policy')
+        else:
+            document = parse_document(output)
         if document.content_sha256 != hashlib.sha256(content).hexdigest() or document.filename != filename or document.mime_type != mime_type or document.profile != profile:
             raise ValueError("document identity mismatch")
         return document
     except ValueError:
         raise DocumentRunnerError("invalid_output", "Isolated document parser returned invalid evidence") from None
+
+
+def _validate_manifest(manifest,profile,document):
+    if not isinstance(manifest,dict) or set(manifest)!={'format','frames','total_pixels'} or manifest['format']!=document.format:
+        raise ValueError('Raster manifest format')
+    frames=manifest['frames']
+    if not isinstance(frames,list) or not 0<len(frames)<=profile.limits.max_pages or document.physical_pages!=len(frames):
+        raise ValueError('Raster manifest page count')
+    total=0
+    for index,frame in enumerate(frames,1):
+        if not isinstance(frame,dict) or frame.get('frame')!=index:
+            raise ValueError('Raster manifest frame order')
+        dimensions=frame.get('render_size')
+        if not isinstance(dimensions,list) or len(dimensions)!=2 or any(type(n)is not int or n<=0 or n>profile.limits.max_dimension for n in dimensions):
+            raise ValueError('Raster manifest dimensions')
+        pixels=dimensions[0]*dimensions[1]
+        if pixels>profile.limits.max_frame_pixels:
+            raise DocumentRunnerError('pixel_limit','Raster frame exceeded policy')
+        total+=pixels
+        if total>profile.limits.max_total_pixels:
+            raise DocumentRunnerError('pixel_limit','Cumulative raster pixels exceeded policy')
+    if type(manifest['total_pixels'])is not int or manifest['total_pixels']!=total:
+        raise ValueError('Raster manifest cumulative count')
+
+
+def _cpu_usage(value):
+    import math
+    if type(value)not in {int,float} or not math.isfinite(value) or value<0:
+        raise ValueError('Invalid measured CPU consumption')
+    return float(value)

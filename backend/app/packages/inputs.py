@@ -182,6 +182,13 @@ def _zip(data, deadline, max_bytes):
 def detect(data, name):
     if data.startswith(b'%PDF-'):
         return 'application/pdf', 'inspection_available'
+    signatures=((b'\xff\xd8\xff','image/jpeg'),(b'\x89PNG\r\n\x1a\n','image/png'),
+        (b'II*\x00','image/tiff'),(b'MM\x00*','image/tiff'),(b'BM','image/bmp'))
+    for signature,mime in signatures:
+        if data.startswith(signature): return mime,'ocr_required'
+    if data.startswith(b'RIFF') and data[8:12]==b'WEBP': return 'image/webp','ocr_required'
+    if data[4:8]==b'ftyp' and data[8:12] in {b'heic',b'heix',b'hevc',b'hevx',b'heif',b'mif1',b'msf1'}:
+        return 'image/heic','ocr_required'
     if data.lstrip().startswith(b'{\\rtf'):
         return 'application/rtf', 'adapter_unavailable'
     if data.startswith(b'Rar!'):
@@ -197,7 +204,8 @@ def detect(data, name):
         '.webp':'image/webp','.heic':'image/heic'}
     suffix='.'+name.rsplit('.',1)[-1].lower() if '.' in name else ''
     if suffix in unavailable:
-        return unavailable[suffix], 'adapter_unavailable'
+        mime=unavailable[suffix]
+        return mime, 'ocr_required' if mime in {'image/jpeg','image/png','image/tiff','image/bmp','image/webp','image/heic'} else 'adapter_unavailable'
     try:
         text = data.decode('utf-8-sig')
         if all(ord(c) >= 32 or c in '\t\n\r' for c in text):

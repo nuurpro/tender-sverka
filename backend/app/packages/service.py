@@ -26,6 +26,8 @@ DOCUMENT_FIELDS = ('id','name','relative_path','size','mime_type','file_hash','p
 def format_support(mime,role='document'):
     if role=='archive':
         return 'provenance'
+    if mime in {'image/jpeg','image/png','image/tiff','image/heic','image/bmp','image/webp'}:
+        return 'ocr_required'
     if mime in {'application/pdf','text/plain','text/csv',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}:

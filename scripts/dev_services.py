@@ -18,7 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 INFRA = ROOT / "infrastructure"
 ENV = INFRA / ".env"
 DOCUMENT_RUNNER_FIELDS = ("DOCUMENT_RUNNER_MODE", "DOCUMENT_RUNTIME_PYTHON",
-                          "DOCUMENT_PARSER_CODE_PATH", "DOCUMENT_WSL_DISTRIBUTION")
+                          "DOCUMENT_RUNTIME_PYTHON_SHA256", "DOCUMENT_PARSER_CODE_PATH", "DOCUMENT_WSL_DISTRIBUTION")
+DOCUMENT_OCR_FIELDS = ("APP_DOCUMENT_OCR_MODE", "APP_DOCUMENT_OCR_MAX_FRAME_PIXELS",
+                       "APP_DOCUMENT_OCR_MAX_TOTAL_PIXELS", "APP_DOCUMENT_OCR_MAX_RASTER_PIXELS",
+                       "APP_DOCUMENT_OCR_RASTER_DPI", "APP_DOCUMENT_OCR_PAGE_SEGMENTATION",
+                       "APP_DOCUMENT_OCR_LOW_CONFIDENCE_REVIEW", "APP_DOCUMENT_OCR_DOCUMENT_SECONDS")
 
 
 def initialize():
@@ -153,6 +157,9 @@ def verify_workspace(values, *, broker=False, storage=False, documents=False):
         raise ValueError("Document runner configuration is required for actual sandbox verification")
     environment = {**os.environ, "WORKSPACE_TEST_DATABASE_URL": values["MIGRATION_DATABASE_URL"],
                    "WORKSPACE_TEST_RUNTIME_DATABASE_URL": values["DATABASE_URL"]}
+    for key in tuple(environment):
+        if key.startswith("WORKSPACE_TEST_DOCUMENT_"):
+            environment.pop(key, None)
     environment.pop("WORKSPACE_TEST_BROKER_URL", None)
     if broker:
         environment["WORKSPACE_TEST_BROKER_URL"] = values["CELERY_BROKER_URL"]
@@ -161,12 +168,17 @@ def verify_workspace(values, *, broker=False, storage=False, documents=False):
         if storage:
             environment["WORKSPACE_TEST_" + key] = values[key]
     environment.pop("DOCUMENT_RUNNER_INTEGRATION", None)
+    environment.pop("DOCUMENT_OCR_INTEGRATION", None)
     for key in DOCUMENT_RUNNER_FIELDS:
-        environment.pop("WORKSPACE_TEST_" + key, None)
         if documents:
             environment["WORKSPACE_TEST_" + key] = values[key]
     if documents:
         environment["DOCUMENT_RUNNER_INTEGRATION"] = "1"
+        for key in DOCUMENT_OCR_FIELDS:
+            if key in values:
+                environment["WORKSPACE_TEST_" + key.removeprefix("APP_")] = values[key]
+        if values.get("APP_DOCUMENT_OCR_MODE") == "tesseract":
+            environment["DOCUMENT_OCR_INTEGRATION"] = "1"
     subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=ROOT / "backend",
                    env=environment, check=True)
 
@@ -183,7 +195,7 @@ def runtime_environment(values):
                 "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN", "GARAGE_RPC_SECRET"):
         environment.pop(key, None)
     for key in tuple(environment):
-        if key.startswith("WORKSPACE_TEST_DOCUMENT_") or key == "DOCUMENT_RUNNER_INTEGRATION":
+        if key.startswith("WORKSPACE_TEST_DOCUMENT_") or key in {"DOCUMENT_RUNNER_INTEGRATION", "DOCUMENT_OCR_INTEGRATION"}:
             environment.pop(key, None)
     environment.update(APP_ENVIRONMENT="development", APP_SMS_PROVIDER="mock")
     return environment

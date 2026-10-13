@@ -19,10 +19,12 @@ from xml.parsers import expat
 
 if __package__:
     from .schemas import (CellAnchor, CoverageEntry, DocumentBlock, NormalizedDocument,
-                          ParserProfile, PartAnchor, PDFAnchor, TextAnchor, TextMapSegment, XMLAnchor)
+                          ParserProfile, PartAnchor, PDFAnchor, TextAnchor, TextMapSegment, XMLAnchor,
+                          OCRProfile, NormalizedDocumentV2, CoverageV2)
 else:
     from schemas import (CellAnchor, CoverageEntry, DocumentBlock, NormalizedDocument,
-                         ParserProfile, PartAnchor, PDFAnchor, TextAnchor, TextMapSegment, XMLAnchor)
+                         ParserProfile, PartAnchor, PDFAnchor, TextAnchor, TextMapSegment, XMLAnchor,
+                         OCRProfile, NormalizedDocumentV2, CoverageV2)
 
 
 class DocumentReadError(ValueError):
@@ -105,9 +107,11 @@ class _Builder:
         status = 'unavailable' if all(c.state == 'adapter_unavailable' for c in self.coverage) else ('partial' if pending else 'complete')
         if self.pages is None:
             self.warnings.append('Physical page count is unknown; this document cannot pass the physical page budget gate')
-        result = NormalizedDocument(content_sha256=hashlib.sha256(self.content).hexdigest(), filename=self.filename,
+        model=NormalizedDocumentV2 if isinstance(self.profile,OCRProfile) else NormalizedDocument
+        coverage=tuple(CoverageV2(**c.model_dump()) for c in self.coverage) if model is NormalizedDocumentV2 else tuple(self.coverage)
+        result = model(content_sha256=hashlib.sha256(self.content).hexdigest(), filename=self.filename,
                                     mime_type=self.mime_type, format=self.format, profile=self.profile, status=status,
-                                    blocks=tuple(self.blocks), coverage=tuple(self.coverage), physical_pages=self.pages,
+                                    blocks=tuple(self.blocks), coverage=coverage, physical_pages=self.pages,
                                     analysis_allowed=False,
                                     warnings=tuple(self.warnings))
         if len(result.model_dump_json().encode()) > self.profile.limits.max_output_bytes:
@@ -860,7 +864,7 @@ def _pdf(builder):
                     if width <= 0 or height <= 0:
                         _fail('invalid_pdf', 'PDF image has invalid pixel dimensions')
                     pixels += int(width)*int(height)
-                    if pixels > limits.max_pixels:
+                    if pixels > (limits.max_total_pixels if isinstance(builder.profile,OCRProfile) else limits.max_pixels):
                         _fail('pixel_limit', 'PDF source images exceed pixel limit')
                     builder.coverage_add(f'coverage:pdf:page:{page.page_number}:image:{index}', 'image',
                                          'vision_pending' if chars else 'ocr_pending', _pdf_anchor(page, [image], index),

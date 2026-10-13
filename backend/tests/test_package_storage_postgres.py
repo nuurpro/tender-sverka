@@ -31,7 +31,7 @@ def real_storage():
     if any(not os.environ.get(prefix+field) for field in fields):
         pytest.fail('Configured actual S3 acceptance requires every storage setting')
     document_fields={field.lower():os.environ[prefix+field] for field in
-        ('DOCUMENT_RUNNER_MODE','DOCUMENT_RUNTIME_PYTHON','DOCUMENT_PARSER_CODE_PATH','DOCUMENT_WSL_DISTRIBUTION')
+        ('DOCUMENT_RUNNER_MODE','DOCUMENT_RUNTIME_PYTHON','DOCUMENT_RUNTIME_PYTHON_SHA256','DOCUMENT_PARSER_CODE_PATH','DOCUMENT_WSL_DISTRIBUTION')
         if os.environ.get(prefix+field)}
     settings=Settings(environment='test',database_url='sqlite://',session_secret='s'*48,
         **{field.lower():os.environ[prefix+field] for field in fields},**document_fields)

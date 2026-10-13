@@ -42,6 +42,17 @@ def test_document_runner_environment_aliases(monkeypatch):
     assert settings().document_wsl_distribution == "Ubuntu-Test"
 
 
+def test_runtime_pin_is_public_explicit_and_validated(monkeypatch):
+    assert settings().document_runtime_python_sha256==''
+    monkeypatch.setenv('DOCUMENT_RUNTIME_PYTHON_SHA256','a'*64)
+    assert settings().document_runtime_python_sha256=='a'*64
+    monkeypatch.delenv('DOCUMENT_RUNTIME_PYTHON_SHA256')
+    monkeypatch.setenv('APP_DOCUMENT_RUNTIME_PYTHON_SHA256','b'*64)
+    assert settings().document_runtime_python_sha256=='b'*64
+    for value in ['invalid','c'*63,'C'*64]:
+        with pytest.raises(ValidationError):settings(document_runtime_python_sha256=value)
+
+
 def test_bubblewrap_mounts_only_public_runtime_and_parser(monkeypatch):
     module = runner()
     monkeypatch.setattr(module.sys, "platform", "linux")
@@ -57,7 +68,14 @@ def test_bubblewrap_mounts_only_public_runtime_and_parser(monkeypatch):
     assert " /parser " in encoded and " /runtime " in encoded
     assert "--ro-bind / /" not in encoded and "--share-net" not in encoded
     assert "Broker.uz" not in encoded and "/etc" not in encoded
-    assert command[-2:] == ["-I", "/parser/entrypoint.py"]
+    assert command[-1] == "/parser/entrypoint.py"
+    assert command.count('pycache_prefix=/dev/null') == 3
+    assert command.count('-S') == 3 and command.count('-B') == 3
+    assert module.SOURCE_ONLY_START in command[-2]
+    assert command.count(module.STARTUP_GUARD)==2
+    assert command.index(module.STARTUP_GUARD)<command.index('/usr/bin/python3')
+    inner=command.index('--')
+    assert command[inner+1:inner+3]==['/bin/sh','-c']
 
 
 def test_probe_records_material_dependencies_and_python_build():
@@ -168,7 +186,7 @@ def test_real_wsl_catalog_and_cell_unknown_content_remain_pending(format):
     from test_document_readers import pdf_fixture, unknown_xlsx_fixture, unknown_xlsx_container_fixture
     module = runner()
     changes = {'document_runner_mode': 'wsl-bubblewrap'}
-    for field in ('document_runner_mode', 'document_runtime_python', 'document_parser_code_path', 'document_wsl_distribution'):
+    for field in ('document_runner_mode', 'document_runtime_python', 'document_runtime_python_sha256', 'document_parser_code_path', 'document_wsl_distribution'):
         if value := os.environ.get('WORKSPACE_TEST_'+field.upper()):
             changes[field] = value
     config = settings(**changes)
@@ -201,7 +219,7 @@ def test_real_wsl_csv_physical_lines_and_docx_merge_continuity(case):
     from test_document_readers import docx_vertical_fixture
     module = runner()
     changes = {'document_runner_mode': 'wsl-bubblewrap'}
-    for field in ('document_runner_mode', 'document_runtime_python', 'document_parser_code_path', 'document_wsl_distribution'):
+    for field in ('document_runner_mode', 'document_runtime_python', 'document_runtime_python_sha256', 'document_parser_code_path', 'document_wsl_distribution'):
         if value := os.environ.get('WORKSPACE_TEST_'+field.upper()):
             changes[field] = value
     config = settings(**changes)
@@ -231,7 +249,11 @@ def test_real_wsl_csv_physical_lines_and_docx_merge_continuity(case):
 
 def isolated_script(source, **overrides):
     module = runner()
-    config = settings(document_runner_mode="wsl-bubblewrap", **overrides)
+    changes={'document_runner_mode':'wsl-bubblewrap'}
+    for field in ('document_runtime_python','document_runtime_python_sha256','document_parser_code_path','document_wsl_distribution'):
+        if value:=os.environ.get('WORKSPACE_TEST_'+field.upper()):changes[field]=value
+    changes.update(overrides)
+    config = settings(**changes)
     command, is_wsl = module._build_command(config)
     command[-1:] = ["-c", source]
     return module, config, command, is_wsl

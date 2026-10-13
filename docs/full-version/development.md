@@ -236,20 +236,22 @@ runtime. This host now has Python 3.14.4 and a parser virtual environment at
 libraries run inside bubblewrap with no home/Windows mounts. Native readers,
 encrypted artifact publication, retry history and sandbox fault checks passed
 independent specification/quality review and the actual 390-test backend suite.
-Conversion/OCR/CAD, isolated archive admission and real quality/performance
-acceptance remain subsequent delivery work.
+Baseline image/PDF OCR is separately verified in task 4b.1. Conversion, remaining
+layout/handwriting/dewarp, CAD, isolated archive admission and real quality/
+performance acceptance remain subsequent delivery work.
 
 To prepare a comparable fresh WSL runtime, install `python3.14-venv` and
 `bubblewrap` from its distribution, then use the ordinary WSL user:
 
 ```powershell
 wsl.exe -d Ubuntu -- python3 -m venv /home/acer/.local/share/tender-sverka/document-runtime
-wsl.exe -d Ubuntu -- /home/acer/.local/share/tender-sverka/document-runtime/bin/python -m pip install pdfplumber python-docx openpyxl pydantic
+Get-Content scripts/document_runtime_requirements.txt | wsl.exe -d Ubuntu -- /home/acer/.local/share/tender-sverka/document-runtime/bin/python -m pip install -r /dev/stdin
 python scripts/stage_document_parser.py --distribution Ubuntu
 ```
 
-The staging helper copies only `__init__.py`, `entrypoint.py`, `readers.py` and
-`schemas.py`. It preserves exact bytes, computes the same content hash as the
+The staging helper copies only `__init__.py`, `entrypoint.py`, `readers.py`,
+`schemas.py`, `images.py`, `toolchain.py` and the source-only `bootstrap.py`.
+It preserves exact bytes, computes the same content hash as the
 runner, preserves old code versions and atomically selects the new version.
 It never stages server modules, credentials, configuration or uploaded files.
 Use the paths returned by that helper in ignored `infrastructure/.env`:
@@ -257,9 +259,23 @@ Use the paths returned by that helper in ignored `infrastructure/.env`:
 ```dotenv
 DOCUMENT_RUNNER_MODE=wsl-bubblewrap
 DOCUMENT_RUNTIME_PYTHON=/home/acer/.local/share/tender-sverka/document-runtime/bin/python
+DOCUMENT_RUNTIME_PYTHON_SHA256=<qualified-system-python-sha256>
 DOCUMENT_PARSER_CODE_PATH=/home/acer/.local/share/tender-sverka/document-parser/app/documents
 DOCUMENT_WSL_DISTRIBUTION=Ubuntu
 ```
+
+The executable pin is public configuration, not a credential. Obtain the hash
+without executing Python:
+
+```powershell
+wsl.exe -d Ubuntu -- /usr/bin/sha256sum /usr/bin/python3 /home/acer/.local/share/tender-sverka/document-runtime/bin/python
+```
+
+Both must resolve to the qualified distribution interpreter with the same hash.
+Qualification includes the `/usr` source-based standard library and venv
+`home=/usr/bin`; a hash alone does not certify an arbitrary custom build. Store
+the approved hash in the ignored environment. Re-qualify and create new explicit
+processing runs after an interpreter update; never silently refresh the pin.
 
 The local API/worker launcher carries these runtime fields while excluding test
 flags and migration/admin credentials. Re-stage after changing pure parser code;
@@ -267,6 +283,30 @@ an old stage cannot satisfy the current code hash. Actual dependency versions,
 Python build, code identity and resource policy belong to frozen processing
 profiles. Disabled/unavailable isolation blocks normalization. Production uses
 its verified Linux runner and its own deployment configuration.
+
+Before Python starts, a non-interactive shell guard checks the qualified
+executable pin, venv configuration and encoding sources, and refuses startup
+standard-library ZIPs, including dangling links. The flags and inline hook below
+are not sufficient by themselves for that earliest path.
+The supervisor and both sandbox interpreter stages start with
+`-I -S -B -X pycache_prefix=/dev/null`. The cache prefix protects imports performed
+before Python reaches the bootstrap. The bootstrap compiles source rather than
+reading cached bytecode, permits only declared stdlib/extensions/runtime package
+paths and rejects ZIP and sourceless imports. `site`, `.pth` and `sitecustomize`
+hooks are disabled. The bootstrap source and explicit execution policy are
+fingerprinted; existing immutable artifacts keep their historical profiles.
+
+For the image/OCR slice, the local runtime additionally has Tesseract 5.5.0 with
+`rus`, `uzb`, `uzb_cyrl`, `eng` and `osd` traineddata under
+`/usr/share/tesseract-ocr/5/tessdata`. The pinned Python runtime file above records
+the actual native and OCR libraries. The system executable, engine dependency
+closure and traineddata hashes are probed separately outside SQL and verified
+again in the parser. The selected environment must pass actual sandbox and
+image/source tests before `APP_DOCUMENT_OCR_MODE=tesseract` is enabled; the
+committed example keeps it disabled. [OCR configuration and acceptance
+boundaries](image-ocr.md) describe this in detail. `verify --documents` enables
+actual OCR tests only when that explicit mode is configured and does not inherit
+an OCR test opt-in from the caller's environment.
 
 The production deployment must run in Uzbekistan with TLS, restricted roles,
 encrypted data and backups, redundant services, and approved external processor

@@ -25,7 +25,8 @@ from app.workspace.models import (ArtifactUploadAttempt, Document, Job, JobCheck
     Membership, NormalizedArtifact, Project, User, utcnow)
 from app.workspace.repository import Conflict, NotFound, Repository, ValidationError, canonical_json
 from .runner import DocumentRunnerError, ensure_runner_available, run_document
-from .schemas import CoverageEntry, NormalizedDocument, ParserLimits, ParserProfile, PartAnchor, RunnerPolicy
+from .schemas import (CoverageEntry, NormalizedDocument, ParserLimits, ParserProfile, PartAnchor, RunnerPolicy,
+                      OCRProfile, OCRLimits, NormalizedDocumentV2, CoverageV2, parse_document, parse_profile)
 
 STAGE = 'package.normalize'
 
@@ -45,8 +46,24 @@ def processing_profile(settings, language, options=None, *, probe=None):
     probe = ensure_runner_available(settings) if probe is None else probe
     if probe.get('isolated') is not True:
         raise DocumentRunnerError('runner_unavailable', 'Document isolation is unavailable')
-    return ParserProfile(language=language, code_hash=probe['code_hash'], runtime_versions=probe['runtime_versions'],
-        **options.model_dump(), limits=ParserLimits(max_input_bytes=settings.max_package_bytes,
+    profile_type = OCRProfile if settings.document_ocr_mode=='tesseract' else ParserProfile
+    extras={}
+    limit_type=ParserLimits
+    limit_extras={}
+    if profile_type is OCRProfile:
+        if not probe.get('ocr_toolchain'):
+            raise DocumentRunnerError('ocr_unavailable','Configured OCR toolchain is unavailable')
+        extras={'toolchain':probe['ocr_toolchain'],'raster_dpi':settings.document_ocr_raster_dpi,
+                'transform_policy':'affine-exif-osd-deskew-v3',
+                'page_segmentation':settings.document_ocr_page_segmentation,
+                'low_confidence_review':settings.document_ocr_low_confidence_review}
+        limit_type=OCRLimits
+        limit_extras={'max_frame_pixels':settings.document_ocr_max_frame_pixels,
+            'max_total_pixels':settings.document_ocr_max_total_pixels,'max_raster_pixels':settings.document_ocr_max_raster_pixels,
+            'max_document_seconds':settings.document_ocr_document_seconds}
+    return profile_type(language=language, code_hash=probe['code_hash'], runtime_versions=probe['runtime_versions'],
+        **extras,
+        **options.model_dump(), limits=limit_type(**limit_extras,max_input_bytes=settings.max_package_bytes,
             max_pages=settings.max_package_pages, max_output_bytes=min(16_000_000, settings.document_runner_output_bytes)),
         runner_policy=RunnerPolicy(cpu_seconds=settings.document_runner_cpu_seconds,
             memory_bytes=settings.document_runner_memory_bytes, process_limit=settings.document_runner_process_limit,
@@ -132,7 +149,7 @@ class DocumentService:
         if hashlib.sha256(plaintext).hexdigest() != row.content_hash:
             raise AuthenticationFailure()
         try:
-            payload = NormalizedDocument.model_validate_json(plaintext)
+            payload = parse_document(plaintext)
         except ValueError:
             raise AuthenticationFailure() from None
         if payload.content_sha256 != row.file_hash or digest(payload.profile.model_dump(mode='json')) != row.profile_hash:
@@ -153,6 +170,7 @@ class DocumentService:
     def detail(self, org, actor, project, package, artifact, *, refresh_auth=None):
         row,payload = self._read(org,actor,project,package,artifact,refresh_auth)
         return {'artifact':row,'profile':payload.profile.model_dump(mode='json'),
+            'schema_version':payload.schema_version,
             'coverage':[entry.model_dump(mode='json') for entry in payload.coverage],
             'warnings':list(payload.warnings),'analysis_allowed':False}
 
@@ -161,6 +179,7 @@ class DocumentService:
             raise ValidationError('Block pagination is bounded')
         row,payload = self._read(org,actor,project,package,artifact,refresh_auth)
         return {'artifact_id':artifact,'document_id':row['document_id'],'file_hash':row['file_hash'],
+            'schema_version':payload.schema_version,
             'blocks':[block.model_dump(mode='json') for block in payload.blocks[offset:offset+limit]],
             'total':len(payload.blocks),'offset':offset,'limit':limit,
             'coverage':[entry.model_dump(mode='json') for entry in payload.coverage],'analysis_allowed':False}
@@ -173,6 +192,7 @@ class DocumentService:
         if block is None:
             raise NotFound()
         return {'artifact_id':artifact,'document_id':row['document_id'],'file_hash':row['file_hash'],
+                'schema_version':payload.schema_version,
                 'block':block.model_dump(mode='json'),'analysis_allowed':False}
 
     def _worker_inputs(self, context):
@@ -184,7 +204,7 @@ class DocumentService:
             original = nested_package(repo,project,package)
             if digest(original.manifest) != context.payload.get('manifest_hash'):
                 raise ValidationError('Frozen package input changed')
-            profile = ParserProfile.model_validate(context.payload['profile'])
+            profile = parse_profile(context.payload['profile'])
             if digest(profile.model_dump(mode='json')) != context.payload.get('profile_hash'):
                 raise ValidationError('Frozen parser profile changed')
             docs = [self.packages._document_metadata(db,repo,project,package,row.id) for row in db.scalars(
@@ -232,12 +252,14 @@ class DocumentService:
         for item in values['coverage']:
             if item['anchor']['kind']=='part' and item['anchor']['part']==old_name:
                 item['anchor']['part']=doc['name']
-        return NormalizedDocument.model_validate_json(canonical_json(values))
+        return parse_document(canonical_json(values))
 
     def _failure(self, doc, profile, code):
-        return NormalizedDocument(content_sha256=doc['file_hash'],filename=doc['name'],mime_type=doc['mime_type'],
+        model=NormalizedDocumentV2 if isinstance(profile,OCRProfile) else NormalizedDocument
+        coverage=CoverageV2 if model is NormalizedDocumentV2 else CoverageEntry
+        return model(content_sha256=doc['file_hash'],filename=doc['name'],mime_type=doc['mime_type'],
             format='unsupported',profile=profile,status='partial',blocks=(),physical_pages=None,analysis_allowed=False,
-            coverage=(CoverageEntry(id='coverage:failed',kind='unknown',state='failed',anchor=PartAnchor(part=doc['name']),reason=code),),
+            coverage=(coverage(id='coverage:failed',kind='unknown',state='failed',anchor=PartAnchor(part=doc['name']),reason=code),),
             warnings=('native_parser_failed',))
 
     def handle(self, context):
@@ -245,6 +267,7 @@ class DocumentService:
         cancelled = self._cancelled(context,actor)
         failed = False
         results = []
+        known_pages = 0
         for index,doc in enumerate(docs):
             if cancelled():
                 raise LeaseLost()
@@ -283,9 +306,18 @@ class DocumentService:
                     finally:
                         original = None
                 failed = failed or any(entry.state=='failed' for entry in payload.coverage)
+                if payload.physical_pages is not None and known_pages+payload.physical_pages>profile.limits.max_pages:
+                    raise ValidationError('Package cumulative physical pages exceed frozen policy')
                 result = self._publish(context,org,project,actor,package,doc,profile,cache_key,payload,step=step,
                     progress=int((index+1)*95/max(1,len(docs))))
             results.append(result)
+            pages=result.get('physical_pages')
+            if pages is None and result.get('artifact_id'):
+                with authorized(self.engine,org,actor,project,mutate=True) as (db,repo):
+                    pages=self._artifact(db,repo,project,package,result['artifact_id']).physical_pages
+            known_pages+=pages or 0
+            if known_pages>profile.limits.max_pages:
+                raise ValidationError('Package cumulative physical pages exceed frozen policy')
             failed = failed or result.get('failed',False)
         context.checkpoint('normalized:a'+str(context.claim.attempt),context.payload['profile_hash'],{'artifacts':results,'analysis_allowed':False},progress=100)
         if failed:
@@ -311,6 +343,7 @@ class DocumentService:
                 lease_token=context.claim.token,object_key=key,content_size=size,content_hash=content_hash,envelope=envelope,
                 expires_at=self.clock()+timedelta(minutes=3),status='uploading'))
         result = {'artifact_id':artifact_id,'document_id':doc['id'],'status':payload.status,
+                  'physical_pages':payload.physical_pages,
                   'failed':any(entry.state=='failed' for entry in payload.coverage)}
         def write(writes):
             attempt = writes.get(ArtifactUploadAttempt,attempt_id)

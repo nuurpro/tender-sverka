@@ -196,6 +196,7 @@ def test_document_verification_is_explicit_and_does_not_inherit_a_runner(monkeyp
     module = bootstrap_module()
     values = {"MIGRATION_DATABASE_URL": "private-owner", "DATABASE_URL": "private-runtime",
         "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_RUNTIME_PYTHON_SHA256": "a" * 64,
         "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu"}
     for key in values:
         if key.startswith("DOCUMENT_"):
@@ -231,9 +232,74 @@ def test_runtime_launch_preserves_only_selected_document_runner_configuration(mo
     monkeypatch.setenv("WORKSPACE_TEST_DOCUMENT_RUNTIME_PYTHON", "test-only-runner")
     values = {"DATABASE_URL": "runtime", "APP_SESSION_SECRET": "private-session",
         "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_RUNTIME_PYTHON_SHA256": "a" * 64,
         "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu"}
     environment = module.runtime_environment(values)
     assert all(environment[key] == value for key, value in values.items())
     test_runtime_removed = "WORKSPACE_TEST_DOCUMENT_RUNTIME_PYTHON" not in environment
     assert test_runtime_removed
     assert environment["APP_SMS_PROVIDER"] == "mock"
+
+
+def test_document_verification_forwards_explicit_ocr_options_and_removes_inherited_options(monkeypatch):
+    module = bootstrap_module()
+    settings = {
+        "APP_DOCUMENT_OCR_MODE": "tesseract",
+        "APP_DOCUMENT_OCR_MAX_FRAME_PIXELS": "12000000",
+        "APP_DOCUMENT_OCR_MAX_TOTAL_PIXELS": "2000000000",
+        "APP_DOCUMENT_OCR_MAX_RASTER_PIXELS": "8000000",
+        "APP_DOCUMENT_OCR_RASTER_DPI": "200",
+        "APP_DOCUMENT_OCR_PAGE_SEGMENTATION": "3",
+        "APP_DOCUMENT_OCR_LOW_CONFIDENCE_REVIEW": "85",
+        "APP_DOCUMENT_OCR_DOCUMENT_SECONDS": "3600",
+    }
+    for key in settings:
+        monkeypatch.setenv("WORKSPACE_TEST_" + key.removeprefix("APP_"), "unselected-ocr-setting")
+    monkeypatch.setenv("DOCUMENT_OCR_INTEGRATION", "1")
+    values = {"MIGRATION_DATABASE_URL": "private-owner", "DATABASE_URL": "private-runtime",
+        "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_RUNTIME_PYTHON_SHA256": "a" * 64,
+        "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu", **settings}
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: observed.append((command, kwargs)))
+    module.verify_workspace(values)
+    inherited_removed = not any(key.startswith("WORKSPACE_TEST_DOCUMENT_") for key in observed[-1][1]["env"])
+    assert inherited_removed
+    flag_removed = "DOCUMENT_OCR_INTEGRATION" not in observed[-1][1]["env"]
+    assert flag_removed
+    module.verify_workspace(values, documents=True)
+    command, options = observed[-1]
+    expected = {"WORKSPACE_TEST_" + key.removeprefix("APP_"): value for key, value in settings.items()}
+    configured_only = all(options["env"].get(key) == value for key, value in expected.items())
+    assert configured_only
+    assert options["env"]["DOCUMENT_OCR_INTEGRATION"] == "1"
+    assert all("private" not in argument for argument in command)
+
+
+def test_native_verification_does_not_implicitly_enable_ocr(monkeypatch):
+    module = bootstrap_module()
+    monkeypatch.setenv("WORKSPACE_TEST_DOCUMENT_OCR_MODE", "tesseract")
+    monkeypatch.setenv("DOCUMENT_OCR_INTEGRATION", "1")
+    values = {"MIGRATION_DATABASE_URL": "private-owner", "DATABASE_URL": "private-runtime",
+        "DOCUMENT_RUNNER_MODE": "wsl-bubblewrap", "DOCUMENT_RUNTIME_PYTHON": "/owned/runtime/bin/python",
+        "DOCUMENT_RUNTIME_PYTHON_SHA256": "a" * 64,
+        "DOCUMENT_PARSER_CODE_PATH": "/owned/parser", "DOCUMENT_WSL_DISTRIBUTION": "Ubuntu"}
+    observed = []
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: observed.append(kwargs))
+    module.verify_workspace(values, documents=True)
+    ocr_removed = "WORKSPACE_TEST_DOCUMENT_OCR_MODE" not in observed[0]["env"]
+    assert ocr_removed
+    flag_removed = "DOCUMENT_OCR_INTEGRATION" not in observed[0]["env"]
+    assert flag_removed
+
+
+def test_runtime_launch_strips_actual_ocr_test_opt_in_but_keeps_explicit_runtime_setting(monkeypatch):
+    module = bootstrap_module()
+    monkeypatch.setenv("DOCUMENT_OCR_INTEGRATION", "1")
+    monkeypatch.setenv("WORKSPACE_TEST_DOCUMENT_OCR_MODE", "tesseract")
+    environment = module.runtime_environment({"DATABASE_URL": "runtime", "APP_SESSION_SECRET": "private-session",
+        "APP_DOCUMENT_OCR_MODE": "tesseract"})
+    integration_removed = "DOCUMENT_OCR_INTEGRATION" not in environment
+    test_setting_removed = "WORKSPACE_TEST_DOCUMENT_OCR_MODE" not in environment
+    assert integration_removed and test_setting_removed
+    assert environment["APP_DOCUMENT_OCR_MODE"] == "tesseract"

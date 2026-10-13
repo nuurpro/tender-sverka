@@ -1,5 +1,5 @@
 export type PackageKind = "tender" | "bid";
-export type FormatSupport = "inspection_available" | "adapter_unavailable" | "provenance";
+export type FormatSupport = "inspection_available" | "ocr_required" | "adapter_unavailable" | "provenance";
 
 export type PackageDocument = {
   id: string;
