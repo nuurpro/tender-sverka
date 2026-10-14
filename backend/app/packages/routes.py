@@ -84,11 +84,12 @@ async def upload(organization_id:UUID,project_id:UUID,request:Request,user=Depen
                     max_files=request.app.state.settings.max_package_files,max_bytes=request.app.state.settings.max_package_bytes)
         except TimeoutError:
             raise ValidationError('Upload timed out') from None
+        cancelled=threading.Event()
         batch=await guarded_document_thread(prepare_files,files,max_files=request.app.state.settings.max_package_files,
-            max_bytes=request.app.state.settings.max_package_bytes)
+            max_bytes=request.app.state.settings.max_package_bytes,settings=request.app.state.settings,
+            archive_adapter=getattr(service,'archive_adapter',None),cancelled=cancelled.is_set,cancellation=cancelled)
         # No SQL transaction survives body/network I/O; session is checked again
         # after storage and current membership is locked at final commit.
-        cancelled=threading.Event()
         return await guarded_document_thread(service.upload,org,user.id,project,fields.get('kind'),fields.get('participant_id') or None,
             batch,request.headers.get('idempotency-key'),cancellation=cancelled,
             cancelled=cancelled,refresh_auth=lambda:current_user(request))

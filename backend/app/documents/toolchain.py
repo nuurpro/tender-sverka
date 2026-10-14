@@ -18,7 +18,7 @@ else:
     from readers import DocumentReadError
     from bootstrap import SOURCE_ONLY_START, PYTHON_FLAGS, STARTUP_GUARD
 
-CODE_FILES=('__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py')
+CODE_FILES=('__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py','archives.py','archive_entrypoint.py')
 NATIVE_PACKAGES=('pdfplumber','python-docx','openpyxl','pydantic','lxml','Pillow','pdfminer.six','pypdfium2')
 OCR_PACKAGES=('Pillow','pillow-heif','numpy','opencv-python-headless','pypdfium2')
 TESSDATA='/usr/share/tesseract-ocr/5/tessdata'
@@ -175,3 +175,46 @@ def ocr_identity(*,tesseract='/usr/bin/tesseract',tessdata=TESSDATA):
         return result
     except (OSError,ValueError,subprocess.SubprocessError,importlib.metadata.PackageNotFoundError):
         raise DocumentReadError('ocr_unavailable','Configured OCR assets are unavailable') from None
+
+
+def archive_identity():
+    """Freeze standard adapters and fixed tools, independent of native/OCR assets."""
+    if __package__:
+        from .archives import UNRAR_TOOL
+    else:
+        from archives import UNRAR_TOOL
+    try:
+        result={'python.sha256':file_hash(sys.executable),
+                'python-pyvenv.sha256':file_hash(Path(sys.prefix)/'pyvenv.cfg'),
+                'python-execution-policy':'source-only-v2-prestart-zip-guard-qualified-pin',
+                'decoder-policy':'standard-zipfile-rarfile-py7zr-skip-failed-container-v1'}
+        result['python-execution-policy.sha256']=hashlib.sha256((json.dumps(PYTHON_FLAGS)+STARTUP_GUARD+SOURCE_ONLY_START).encode()).hexdigest()
+        roots=[Path(sys.executable)]
+        for name,path in (('startup-shell','/bin/sh'),('startup-readlink','/usr/bin/readlink'),('startup-sha256sum','/usr/bin/sha256sum')):
+            result[name+'.sha256']=file_hash(path);roots.append(Path(path))
+        selected=['packaging']
+        for name in ('rarfile','py7zr'):
+            try:importlib.metadata.distribution(name)
+            except importlib.metadata.PackageNotFoundError:result[name]='unavailable'
+            else:selected.append(name)
+        total_files=0;total_bytes=0
+        for name,distribution in sorted(installed_distributions(selected).items()):
+            result[name]=distribution.version;result[name+'.assets.sha256']=distribution_hash(distribution)
+            for file in distribution.files or ():
+                if str(file).endswith(('.pyc','.pyo')) or '__pycache__' in str(file):continue
+                path=Path(distribution.locate_file(file));total_files+=1;total_bytes+=path.stat().st_size
+                if total_files>_MAX_ASSET_FILES or total_bytes>_MAX_ASSET_BYTES:raise ValueError('package asset budget')
+                if _elf(path):roots.append(path)
+        if Path(UNRAR_TOOL).is_file():
+            result['unrar.sha256']=file_hash(UNRAR_TOOL);roots.append(Path(UNRAR_TOOL))
+            # Official unrar's version/help command has fixed argv and bounded output.
+            result['unrar']=_trusted_output([UNRAR_TOOL],limit=65536).decode('utf-8').strip().splitlines()[0]
+        else:result['unrar']='unavailable'
+        assets,extensions=runtime_tree_assets(sysconfig.get_path('stdlib'))
+        result['python-stdlib.assets.sha256']=hashlib.sha256(json.dumps(assets,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        roots.extend(extensions)
+        linked=elf_dependency_assets(roots)
+        result['runtime-elf-libraries.sha256']=hashlib.sha256(json.dumps(linked,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        return result
+    except (OSError,ValueError,AttributeError,subprocess.SubprocessError,importlib.metadata.PackageNotFoundError):
+        raise DocumentReadError('archive_unavailable','Configured archive adapter assets are unavailable') from None

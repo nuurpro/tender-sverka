@@ -19,7 +19,7 @@ def staging_module():
 
 def test_staging_carries_only_allowlisted_code_and_matches_binary_source_hash(tmp_path):
     module = staging_module()
-    names = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py")
+    names = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py", "archives.py", "archive_entrypoint.py")
     contents = {name: ("# " + name + "\r\n").encode() for name in names}
     for name, data in contents.items():
         (tmp_path / name).write_bytes(data)
@@ -48,18 +48,18 @@ def test_missing_or_oversized_code_refuses_before_any_stage_process(tmp_path, mo
 
 
 @pytest.mark.skipif(os.environ.get("DOCUMENT_RUNNER_INTEGRATION") != "1", reason="Actual sandbox staging opt-in required")
-def test_linux_stage_accepts_largest_seven_file_payload_in_private_tmpfs():
+def test_linux_stage_accepts_largest_nine_file_payload_in_private_tmpfs():
     from app.config import Settings
     from app.documents.runner import _build_command, _stream_process
 
     module = staging_module()
-    names = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py")
+    names = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py", "archives.py", "archive_entrypoint.py")
     contents = {name: b"#" * 262_144 for name in names}
     hashes = {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()}
     digest = hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     request = json.dumps({"files": {name: base64.b64encode(value).decode() for name, value in contents.items()}, "code_hash": digest}).encode()
-    assert len(request) > 1_500_000
-    assert len(request) <= 3_000_000
+    assert len(request) > 3_000_000
+    assert len(request) <= 4_000_000
     runner_fields = ("DOCUMENT_RUNNER_MODE", "DOCUMENT_RUNTIME_PYTHON", "DOCUMENT_RUNTIME_PYTHON_SHA256",
                      "DOCUMENT_PARSER_CODE_PATH", "DOCUMENT_WSL_DISTRIBUTION")
     configured = {key.lower(): os.environ["WORKSPACE_TEST_" + key] for key in runner_fields}

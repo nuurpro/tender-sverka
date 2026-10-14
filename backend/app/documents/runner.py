@@ -21,8 +21,9 @@ if TYPE_CHECKING:
 
 
 class DocumentRunnerError(RuntimeError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, returncode: int | None = None):
         self.code = code
+        self.returncode = returncode
         super().__init__(message)
 
 
@@ -48,7 +49,7 @@ os.execv(sys.argv[2],sys.argv[2:])
 """
 _PID_PREFIX = b"DOCUMENT_RUNNER_PID:"
 _STDERR_LIMIT = 65_536
-_CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py")
+_CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py", "archives.py", "archive_entrypoint.py")
 
 # Apply the parser's process cap after Bubblewrap creates its trusted namespaces.
 # Linux charges namespace setup to ancestor user counters; a low pre-namespace
@@ -72,7 +73,7 @@ def _wsl_prefix(settings: Settings) -> list[str]:
     return [str(Path(root) / "System32" / "wsl.exe"), "--distribution", settings.document_wsl_distribution, "--exec"]
 
 
-def _build_command(settings: Settings, *, probe: bool = False) -> tuple[list[str], bool]:
+def _build_command(settings: Settings, *, probe: bool = False, archive: bool = False) -> tuple[list[str], bool]:
     mode = settings.document_runner_mode
     if mode == "disabled":
         raise DocumentRunnerError("runner_disabled", "Document isolation is disabled")
@@ -84,7 +85,7 @@ def _build_command(settings: Settings, *, probe: bool = False) -> tuple[list[str
     command = ["/usr/bin/bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
                "--cap-drop", "ALL", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
                "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin",
-               "--proc", "/proc", "--dev", "/dev", "--size", str(settings.document_runner_file_bytes), "--tmpfs", "/tmp",
+               "--proc", "/proc", "--dev", "/dev", "--size", str(getattr(settings,"document_runner_tmp_bytes",settings.document_runner_file_bytes)), "--tmpfs", "/tmp",
                "--ro-bind", runtime_root, "/runtime", "--ro-bind", settings.document_parser_code_path,
                "/parser", "--chdir", "/tmp", "--setenv", "HOME", "/tmp", "--setenv", "TMPDIR", "/tmp",
                "--setenv", "LANG", "C.UTF-8", "--setenv", "OMP_THREAD_LIMIT", "1",
@@ -96,7 +97,7 @@ def _build_command(settings: Settings, *, probe: bool = False) -> tuple[list[str
     if probe:
         command += ["-c", _PROBE, 'ocr' if settings.document_ocr_mode=='tesseract' else 'native']
     else:
-        command += ["/parser/entrypoint.py"]
+        command += ["/parser/archive_entrypoint.py" if archive else "/parser/entrypoint.py"]
     limits = {"RLIMIT_CPU": settings.document_runner_cpu_seconds,
               "RLIMIT_AS": settings.document_runner_memory_bytes,
               "RLIMIT_NOFILE": settings.document_runner_file_limit,
@@ -118,7 +119,7 @@ try:
  raise AssertionError('network unexpectedly available')
 except OSError: pass
 finally: s.close()
-names=['__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py']
+names=['__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py','archives.py','archive_entrypoint.py']
 assert {p.name for p in pathlib.Path('/parser').iterdir()} == set(names)
 assert all(pathlib.Path('/parser',n).is_file() and not pathlib.Path('/parser',n).is_symlink() for n in names)
 hashes={n:hashlib.sha256(pathlib.Path('/parser',n).read_bytes()).hexdigest() for n in names}
@@ -256,7 +257,7 @@ def _stream_process(command: list[str], request: bytes, settings: Settings,
     if handshake and not ready.is_set():
         raise DocumentRunnerError("runner_unavailable", "Document isolation failed to start")
     if process.returncode or read_errors:
-        raise DocumentRunnerError("parser_failed", "Isolated document parser failed")
+        raise DocumentRunnerError("parser_failed", "Isolated document parser failed", returncode=process.returncode)
     return bytes(output)
 
 

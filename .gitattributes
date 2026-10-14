@@ -1,2 +1,5 @@
 * text=auto
 *.sh text eol=lf
+
+# UU records include significant encoded padding spaces; preserve fixture bytes.
+backend/tests/fixtures/archives/*.uu -text whitespace=-blank-at-eol

@@ -103,7 +103,9 @@ class DocumentService:
             raise ValidationError('Idempotency-Key is required')
         options = NormalizationOptions.model_validate(options or {})
         with authorized(self.engine,org,actor,project,mutate=True) as (_,repo):
-            nested_package(repo,project,package)
+            original=nested_package(repo,project,package)
+            if not any(document['provenance_role']=='document' for document in original.manifest['documents']):
+                raise ValidationError('No available documents for normalization.')
         probe = self.readiness(self.settings)  # No SQL lock survives OS work.
         if refresh_auth:
             refresh_auth()

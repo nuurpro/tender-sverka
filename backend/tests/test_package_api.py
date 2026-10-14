@@ -30,6 +30,13 @@ class MemoryPrivateStore:
         self.objects.pop(key, None)
 
 
+def synthetic_archive_adapter(files,**kwargs):
+    from app.documents.archives import prepare_files
+    from app.workspace.repository import ValidationError
+    try: return prepare_files(files,**kwargs)
+    except ValueError as exc: raise ValidationError(str(exc)) from None
+
+
 @pytest.fixture
 def packages(full_api):
     client, engine, _, _, app = full_api
@@ -39,7 +46,7 @@ def packages(full_api):
     except ImportError:
         pytest.fail('Immutable encrypted package service/routes are missing')
     store = MemoryPrivateStore()
-    app.state.packages = PackageService(engine, app.state.settings, store, EnvelopeCipher({'v1': b'k' * 32}, 'v1'))
+    app.state.packages = PackageService(engine, app.state.settings, store, EnvelopeCipher({'v1': b'k' * 32}, 'v1'),archive_adapter=synthetic_archive_adapter)
     login(full_api)
     org = create_org(client); pid = project(client, org)
     return client, engine, app, store, org, pid
@@ -157,14 +164,52 @@ def test_download_admission_stays_held_until_response_bytes_are_sent(packages):
     app.state.document_admission.release()
 
 
-def test_unsupported_archive_format_is_visible_before_inspection_job(packages):
+def test_malformed_archive_visible_with_issue_without_inspection_job(packages):
+    from app.workspace.database import tenant_transaction
+    from app.workspace.models import PackageRevision,Job,AuditEvent,PackageInspection
     client,engine,app,store,org,pid=packages
     base=f'/api/organizations/{org}/projects/{pid}'
-    package=upload(client,base,name='archive.rar',data=b'Rar!\x1a\x07\x00opaque original').json()['package']
-    pending=client.get(base+f'/packages/{package["id"]}/preflight').json()
-    assert 'adapter_unavailable' in pending['blockers'], 'Unsupported archive disappeared behind a generic pending status'
-    assert pending['formats'][0]['support']=='adapter_unavailable'
-    assert package['documents'][0]['format_support']=='adapter_unavailable'
+    original=b'Rar!\x1a\x07\x00opaque original'
+    response=upload(client,base,name='archive.rar',data=original)
+    assert response.status_code==200,response.text
+    result=response.json();manifest=result['package']['manifest']
+    assert manifest['schema_version']==3 and manifest['issues'][0]['code'] in {'ARCHIVE_CORRUPTED','UNSUPPORTED_FORMAT'}
+    assert result['inspection_job_id'] is None
+    preflight=client.get(base+'/packages/'+result['package']['id']+'/preflight').json()
+    assert preflight['issues']==manifest['issues'] and preflight['inspection_status']=='inspected'
+    assert preflight['analysis_allowed'] is False and 'no_available_documents' in preflight['blockers']
+    assert preflight['page_count']==preflight['token_count']==preflight['token_upper_bound']==0
+    assert 'archive_files_skipped' in preflight['warnings'] and preflight['formats']==[]
+    assert upload(client,base,name='archive.rar',data=original).json()==result
+    normalization=client.post(base+'/packages/'+result['package']['id']+'/normalize',json={},
+        headers={**auth_headers(client),'Idempotency-Key':'all-bad-normalize'})
+    assert normalization.status_code==422
+    with tenant_transaction(engine,org) as db:
+        assert len(list(db.scalars(select(PackageRevision))))==1 and not list(db.scalars(select(Job)))
+        events=list(db.scalars(select(AuditEvent).where(AuditEvent.action=='archive.file.skipped')))
+        assert len(events)==1 and events[0].after==manifest['issues'][0]
+        inspection=db.scalar(select(PackageInspection))
+        assert inspection.result['issues']==manifest['issues'] and inspection.result['page_count']==0
+
+
+def test_mixed_archive_issues_are_persisted_without_losing_valid_documents(packages):
+    from app.workspace.database import tenant_transaction
+    from app.workspace.models import AuditEvent
+    from test_archive_standard import zipped
+    client,engine,app,store,org,pid=packages
+    base=f'/api/organizations/{org}/projects/{pid}'
+    response=client.post(base+'/packages',data={'kind':'tender'},files=[
+        ('files',('good.zip',zipped([('source.txt',b'public valid source')]),'application/octet-stream')),
+        ('files',('bad.zip',b'PK\x03\x04bad','application/octet-stream'))],
+        headers={**auth_headers(client),'Idempotency-Key':'mixed-archive'})
+    assert response.status_code==200,response.text
+    result=response.json();manifest=result['package']['manifest']
+    assert manifest['schema_version']==3 and manifest['accounting']['logical_files']==1
+    assert manifest['issues'][0]['path']=='bad.zip' and result['inspection_job_id']
+    preflight=client.get(base+'/packages/'+result['package']['id']+'/preflight').json()
+    assert preflight['issues']==manifest['issues'] and 'archive_files_skipped' in preflight['warnings']
+    with tenant_transaction(engine,org) as db:
+        assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action=='archive.file.skipped'))))==1
 
 
 def test_cancelled_upload_waits_for_owned_storage_cleanup_before_releasing_admission(packages):

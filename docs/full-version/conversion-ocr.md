@@ -62,18 +62,24 @@ review policy; conversion alone does not certify their values.
 
 ## 4. Bounded RAR/7Z and archive evidence
 
-Introduce format adapters behind an isolated archive protocol. Preserve archive
-originals, folder structure and each leaf's provenance. Enforce 20 logical
-documents, 50,000,000 actual cumulative expanded bytes and the existing wire,
-entry-count, path, depth and timeout limits across all nested formats.
-Move the existing bounded host-side ZIP admission into this protocol as well;
-its task-3b safety tests do not establish OS isolation of archive expansion.
+Revised by the user on 14 October 2026: use standard high-level archive
+libraries/tools with timeouts and try/except handling. Stop custom native
+decoder builds and RAR bit-stream optimization. Preserve originals, folders and
+leaf provenance within existing wire, logical/output-byte and path limits.
+Parsing still uses the isolated document runtime, without application credentials
+or a host-parser fallback.
 
-Reject traversal, absolute paths, links, ambiguous/duplicate names and encrypted
-archives without approved handling. Count actual emitted bytes, not trusted
-directory sizes. No entry name controls a host output path. Exercise mixed nested
-ZIP/RAR/7Z, malformed headers, honest/dishonest size metadata, bombs and interrupted
-expansion. These tests must exercise the actual selected archive runtime.
+Mark damaged files `ARCHIVE_CORRUPTED` and unsupported compression/formats
+`UNSUPPORTED_FORMAT`. Store per-file issue logs in the tenant-scoped database and
+immutable package metadata, skip problematic inputs and continue valid files.
+Expose the issues in preflight/status responses. A wholly unusable package must
+report no available documents rather than fabricate evidence. Replay cannot
+duplicate logs. Tests cover valid+damaged/unsupported/timeout mixes, retained
+originals, persisted issues and continuation to normalization.
+
+Archive acceptance is standard-library behavior and bounded failure recovery;
+native bit-level completion proofs are not a prerequisite for the working
+extraction/comparison/matrix/export scenario.
 
 ## 5. Structure, classification and specialized regions
 

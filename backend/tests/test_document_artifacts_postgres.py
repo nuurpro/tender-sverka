@@ -219,7 +219,7 @@ def test_actual_isolated_native_pdf_docx_sparse_formula_xlsx_and_encoded_csv(act
     stream=BytesIO();word.save(stream)
     files=[('mixed.pdf',pdf_fixture(90,image=True)),('actual.docx',stream.getvalue()),
            ('sparse.xlsx',xlsx_fixture(cache='<v>2</v>')),('encoded.csv','имя,значение\r\nодин,два\r\n'.encode('cp1251'))]
-    original=service.packages.upload(org,actor,project,'tender',None,prepare_files(files),'formats-original')['package']
+    original=service.packages.upload(org,actor,project,'tender',None,prepare_files(files,settings=service.settings),'formats-original')['package']
     started=service.start(org,actor,project,original['id'],'formats-native',{'encoding':'cp1251'})
     jobs=JobService(engine,org);claim=jobs.claim(started['job']['id']);service.handle(ExecutionContext(jobs,started['job']['id'],claim));jobs.finish(started['job']['id'],claim.token)
     rows=service.artifacts(org,actor,project,original['id'],started['job']['id'])['artifacts']

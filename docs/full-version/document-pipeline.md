@@ -5,6 +5,14 @@ turns those originals into versioned, verifiable source material. The complete
 F01–F50 ledger remains the acceptance scope; these delivery slices describe
 dependencies rather than exceptions to the PRD.
 
+User revision, 14 October 2026: archive handling uses standard high-level
+libraries/tools, timeouts, try/except and database-recorded per-file
+`ARCHIVE_CORRUPTED`/`UNSUPPORTED_FORMAT` issues. Failed archive files are skipped
+and valid files continue. Custom native decoder builds and RAR4/RAR5 optimization
+are stopped. Historical byte-level research below does not override this rule.
+Finish the working extraction/comparison/matrix/export path before remaining
+document specializations; preserve their requirements in the main ledger.
+
 ## 4a: normalized evidence and native readers
 
 Introduce strict normalized-document, block, anchor, coverage and processing

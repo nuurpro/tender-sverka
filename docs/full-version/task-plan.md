@@ -5,6 +5,14 @@ acceptance gates remain the definition of completion. Each implementation task
 uses behavior tests first, independent specification review, then quality review.
 This document records dependencies, not a reduction of scope.
 
+User steering, 14 October 2026: stop native RAR decoder research. Use standard
+archive libraries/tools with timeouts, record `ARCHIVE_CORRUPTED` or
+`UNSUPPORTED_FORMAT` in the database, skip failed files and continue valid ones.
+After this bounded archive stage, prioritize tasks 5–8 to deliver a working
+End-to-End extraction/comparison/matrix/export flow; finish remaining document
+specializations and integrations afterward. Native bit-level completion proofs
+and custom decoder builds are no longer acceptance requirements.
+
 1. **Versioned persistence and runtime checks.** PostgreSQL/Alembic, restricted
    tenant role, FORCE RLS, draft/approve/fork checklist history, immutable package
    and comparison inputs, transactionally audited changes and idempotent outbox.
@@ -25,6 +33,8 @@ This document records dependencies, not a reduction of scope.
 5. **Extraction and evidence.** Structured requirements, predicates, lot items,
    references/contradictions/duplicates; bid facts and source precedence; gateway
    capability profiles, organization permission, token/cost budgets and caches.
+   The [grounded analysis contract](analysis-contract.md) defines frozen inputs,
+   evidence binding, gateway policies and the existing job/API integration points.
 6. **Evaluation.** Decimal unit/numeric/date rules and semantic comparison;
    evidence/coverage validation; exact per-requirement results; five bids with
    frozen input snapshots; scoring intervals/categories/readiness; versioned

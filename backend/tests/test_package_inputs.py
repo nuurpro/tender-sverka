@@ -6,7 +6,7 @@ import pytest
 
 
 def test_csv_rtf_and_odf_remain_distinct_native_or_pending_leaf_originals():
-    from app.packages.inputs import prepare_files
+    from app.documents.archives import prepare_files
     from io import BytesIO
     import zipfile
     csv = prepare_files([('data.csv',b'a,b\n1,2\n')]).leaves[0]
@@ -25,7 +25,7 @@ def test_csv_rtf_and_odf_remain_distinct_native_or_pending_leaf_originals():
 
 
 def test_ascii_drawings_and_malformed_office_zip_are_not_plain_text_evidence():
-    from app.packages.inputs import prepare_files
+    from app.documents.archives import prepare_files
     from io import BytesIO
     import zipfile
     drawing=prepare_files([('drawing.dxf',b'0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n')]).leaves[0]
@@ -38,31 +38,15 @@ def test_ascii_drawings_and_malformed_office_zip_are_not_plain_text_evidence():
     assert original.leaves[0].data==stream.getvalue()
 
 
-@pytest.mark.parametrize('budget',[1000,1000000])
-def test_forged_zip_size_and_prefix_crc_cannot_truncate_an_original_member(budget):
-    from io import BytesIO
-    import struct,zipfile,zlib
-    from app.packages.inputs import prepare_files
-    from app.workspace.repository import ValidationError
-    original=b'original prefix '+b'x'*100000
-    stream=BytesIO()
-    with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr('a.txt',original)
-    forged=bytearray(stream.getvalue());prefix=512;crc=zlib.crc32(original[:prefix])
-    central=forged.index(b'PK\x01\x02')
-    for offset in (14,central+16):
-        struct.pack_into('<I',forged,offset,crc)
-    for offset in (22,central+24):
-        struct.pack_into('<I',forged,offset,prefix)
-    with pytest.raises(ValidationError):
-        prepare_files([('forged.zip',bytes(forged))],max_bytes=budget)
 
-from app.workspace.repository import ValidationError
+from app.documents.archives import ValidationError
+from app.workspace.repository import ValidationError as IntakeError
 
 
 def inputs():
     try:
-        from app.packages.inputs import prepare_files, receive_multipart
+        from app.documents.archives import prepare_files
+        from app.packages.inputs import receive_multipart
     except ImportError:
         pytest.fail('Bounded package receiving/inspection is missing')
     return prepare_files, receive_multipart
@@ -85,51 +69,43 @@ def test_zip_provenance_and_measured_independent_wire_expansion_limits():
     assert batch.leaves[0].path == 'archive.zip/folder/a.txt'
     assert batch.containers[0].data == original
     assert batch.leaves[0].file_hash and batch.leaves[0].mime_type == 'text/plain'
-    with pytest.raises(ValidationError):
-        prepare([('bomb.zip', archive([('a.txt', b'a' * 1001)]))], max_bytes=1000)
-    with pytest.raises(ValidationError):
-        prepare([('many.zip', archive([(f'{i}.txt', b'a') for i in range(21)]))])
+    assert prepare([('bomb.zip', archive([('a.txt', b'a' * 1001)]))], max_bytes=1000).issues
+    assert prepare([('many.zip', archive([(f'{i}.txt', b'a') for i in range(21)]))]).issues
 
 
 @pytest.mark.parametrize('name', ['../evil.txt', '/root.txt', 'C:\\evil.txt', 'nul\x00.txt', 'a/../x.txt', 'a//x.txt', 'a\n.txt'])
 def test_unsafe_names_rejected_at_any_depth(name):
     prepare, _ = inputs()
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValidationError,IntakeError)):
         prepare([(name, b'x')])
-    with pytest.raises(ValidationError):
-        zipped = archive([(name.replace('\x00', 'X'), b'x')])
-        if '\x00' in name:
-            zipped = zipped.replace(b'nulX.txt', b'nul\x00.txt')
-        prepare([('safe.zip', zipped)])
+    zipped = archive([(name.replace('\x00', 'X'), b'x')])
+    if '\x00' in name:zipped = zipped.replace(b'nulX.txt', b'nul\x00.txt')
+    assert prepare([('safe.zip', zipped)]).issues
 
 
 def test_duplicates_symlinks_empty_corrupt_and_nested_depth_refused():
     prepare, _ = inputs()
     for entries in [[('a.txt', b'x'), ('a.txt', b'y')], [('a.txt', b'')]]:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValidationError,IntakeError)):
             prepare(entries)
-    with pytest.raises(ValidationError):
-        prepare([('bad.zip', b'PK\x03\x04bad')])
-    with pytest.raises(ValidationError):
-        prepare([('dup.zip', archive([('A.txt', b'a'), ('a.txt', b'b')]))])
+    assert prepare([('bad.zip', b'PK\x03\x04bad')]).issues
+    assert prepare([('dup.zip', archive([('A.txt', b'a'), ('a.txt', b'b')]))]).issues
     stream = BytesIO()
     with zipfile.ZipFile(stream, 'w') as z:
         info = zipfile.ZipInfo('link'); info.create_system = 3; info.external_attr = 0o120777 << 16
         z.writestr(info, 'target')
-    with pytest.raises(ValidationError):
-        prepare([('link.zip', stream.getvalue())])
+    assert prepare([('link.zip', stream.getvalue())]).issues
     nested = b'leaf'
     for _ in range(5):
         nested = archive([('deep.zip', nested)])
-    with pytest.raises(ValidationError):
-        prepare([('nested.zip', nested)])
+    assert prepare([('nested.zip', nested)]).issues
 
 
 def test_ooxml_is_document_and_unknown_formats_explicitly_pending():
     from docx import Document
     prepare, _ = inputs()
     stream = BytesIO(); doc = Document(); doc.add_paragraph('actual office text'); doc.save(stream)
-    batch = prepare([('renamed.bin', stream.getvalue()), ('legacy.rar', b'Rar!\x1a\x07\x00payload')])
+    batch = prepare([('renamed.bin', stream.getvalue()), ('legacy.bin', b'unsupported binary\x00payload')])
     assert len(batch.leaves) == 2 and not batch.containers
     assert batch.leaves[0].mime_type.endswith('wordprocessingml.document')
     assert batch.leaves[1].support == 'adapter_unavailable'
@@ -144,9 +120,9 @@ def test_multipart_counts_stream_bytes_and_requires_final_boundary():
     result = asyncio.run(receive(stream(body), 'multipart/form-data; boundary=b', max_bytes=5))
     assert result == ({'kind': 'tender'}, [('a.txt', b'hello')])
     for changed in [body[:-10], body.replace(b'hello', b'helloo')]:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValidationError,IntakeError)):
             asyncio.run(receive(stream(changed), 'multipart/form-data; boundary=b', max_bytes=5))
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValidationError,IntakeError)):
         asyncio.run(receive(stream(body), 'multipart/form-data; boundary=' + 'x'*201))
 
 
@@ -155,9 +131,8 @@ def test_nested_archive_cumulative_expansion_budget_and_unicode_controls():
     inner=archive([('a.txt',b'a'*900)])
     outer=archive([('inner.zip',inner)])
     assert len(inner)+900>1000 and len(outer)<1000
-    with pytest.raises(ValidationError):
-        prepare([('outer.zip',outer)],max_bytes=1000)
-    with pytest.raises(ValidationError):
+    assert prepare([('outer.zip',outer)],max_bytes=1000).issues
+    with pytest.raises((ValidationError,IntakeError)):
         prepare([('unsafe\u0085name.txt',b'x')])
 
 
@@ -167,36 +142,12 @@ def test_multipart_rejects_unexpected_epilogue_and_huge_headers():
     async def stream(data):
         yield data
     for changed in [body+b'not a multipart body',body.replace(b'filename="a.txt"',b'filename="'+b'a'*9000+b'"')]:
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValidationError,IntakeError)):
             asyncio.run(receive(stream(changed),'multipart/form-data; boundary=b'))
 
 
-def test_expired_archive_deadline_never_constructs_eager_zip_directory(monkeypatch):
-    import time
-    from app.packages.inputs import _zip
-    data=archive([('a.txt',b'contents')]);constructed=[];constructor=zipfile.ZipFile
-    def observed_constructor(*args,**kwargs):
-        constructed.append(True);return constructor(*args,**kwargs)
-    monkeypatch.setattr(zipfile,'ZipFile',observed_constructor)
-    with pytest.raises(ValidationError):
-        _zip(data,time.monotonic()-1,50_000_000)
-    assert not constructed,'An expired request allocated the complete ZIP central directory'
 
 
-def test_actual_central_directory_entries_are_bounded_before_zipfile_even_if_eocd_lies(monkeypatch):
-    import struct
-    import time
-    from app.packages.inputs import _zip
-    data=bytearray(archive([(f'{i:06x}',b'x') for i in range(2050)]))
-    eocd=len(data)-22
-    struct.pack_into('<HH',data,eocd+8,1,1)  # Dishonest total counts cannot weaken the scan.
-    constructed=[];constructor=zipfile.ZipFile
-    def observed_constructor(*args,**kwargs):
-        constructed.append(True);return constructor(*args,**kwargs)
-    monkeypatch.setattr(zipfile,'ZipFile',observed_constructor)
-    with pytest.raises(ValidationError):
-        _zip(bytes(data),time.monotonic()+5,50_000_000)
-    assert not constructed,'The declared count bypassed pre-allocation real-entry accounting'
 
 
 def test_small_zip64_archive_has_bounded_valid_directory_and_preserves_original():

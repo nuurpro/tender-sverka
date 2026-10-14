@@ -71,9 +71,12 @@ def package_detail(db, repo, package):
 
 
 class PackageService:
-    def __init__(self, engine, settings, store=None, cipher=None, *, clock=utcnow, inspection_readiness=None):
+    def __init__(self, engine, settings, store=None, cipher=None, *, clock=utcnow, inspection_readiness=None,archive_adapter=None):
         if inspection_readiness is not None and settings.environment!='test':
             raise ValueError('Inspection adapter injection requires the explicit test environment')
+        if archive_adapter is not None and settings.environment!='test':
+            raise ValueError('Archive adapter injection requires the explicit test environment')
+        self.archive_adapter=archive_adapter
         self.engine, self.settings, self.store, self.cipher, self.clock = engine, settings, store, cipher, clock
         self.inspection_readiness=inspection_readiness
 
@@ -99,7 +102,7 @@ class PackageService:
         with authorized(self.engine,org,actor,project,mutate=True) as (_,repo):
             language=repo._get(Project,project).report_language
         from .inspection import inspection_profile
-        frozen_inspection=inspection_profile(self.settings,language,readiness=self.inspection_readiness)
+        frozen_inspection=inspection_profile(self.settings,language,readiness=self.inspection_readiness) if batch.leaves else None
         file_inputs = sorted([{'path':f.path,'name':f.name,'hash':f.file_hash,'size':len(f.data),'role':f.role}
                               for f in batch.leaves + batch.containers],key=lambda v:v['path'])
         digest = hashlib.sha256(canonical_json({'kind':kind,'participant_id':participant,'files':file_inputs}).encode()).hexdigest()
@@ -205,6 +208,15 @@ class PackageService:
                 'expanded_bytes':batch.expanded_bytes},
                 'documents':[{**{field:obj[field] for field in DOCUMENT_FIELDS},
                     'format_support':format_support(obj['mime_type'],obj['provenance_role'])} for obj in attempt.objects]}
+            if batch.admission is not None:
+                standard=batch.admission.get('policy_version')=='archive-admission-v4'
+                manifest['schema_version']=3 if standard else 2
+                manifest['archive_admission']=batch.admission
+                if standard:manifest['issues']=batch.issues
+                manifest['accounting']['directory_entries']=batch.directory_entries
+                source_chains={file.path:list(file.source_chain) for file in batch.leaves+batch.containers}
+                for document in manifest['documents']:
+                    document['source_chain']=source_chains[document['relative_path']]
             package = PackageRevision(organization_id=org,project_id=project,kind=kind,participant_id=participant,
                                       version=version+1,manifest=manifest,status='uploaded')
             db.add(package); db.flush()
@@ -217,10 +229,21 @@ class PackageService:
                 db.add(DocumentKeyEnvelope(organization_id=org,project_id=project,package_id=package.id,
                     document_id=obj['id'],master_key_version=envelope['master_key_version'],envelope=envelope))
             db.flush()
-            job = repo.create_job('package.inspect',project,{'package_id':package.id,'manifest_hash':
-                hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
-                'actor_id':actor,'inspection_profile':frozen_inspection},f'package-inspect:{package.id}')
-            response = {'package':package_detail(db,repo,package),'inspection_job_id':job.id}
+            job=None
+            if batch.leaves:
+                job = repo.create_job('package.inspect',project,{'package_id':package.id,'manifest_hash':
+                    hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
+                    'actor_id':actor,'inspection_profile':frozen_inspection},f'package-inspect:{package.id}')
+            else:
+                result={'inspection_status':'inspected','analysis_allowed':False,'page_count':0,'token_count':0,
+                    'token_upper_bound':0,'blockers':['no_available_documents'],
+                    'warnings':['archive_files_skipped'] if batch.issues else [],'issues':batch.issues}
+                db.add(PackageInspection(organization_id=org,project_id=project,package_id=package.id,
+                    identity_hash=hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
+                    parser_version='archive-admission-v4:no-available-documents',result=result))
+            response = {'package':package_detail(db,repo,package),'inspection_job_id':job.id if job else None}
+            for issue in batch.issues:
+                repo._audit('archive.file.skipped',package,project_id=project,after=issue)
             repo._audit('package.uploaded',package,project_id=project,after={'id':package.id,'version':package.version,'accounting':manifest['accounting']})
             attempt.status='committed'; intent.package_id=package.id; intent.response=response
             db.flush()
@@ -307,7 +330,13 @@ class PackageService:
                 format_support(doc['mime_type'],doc['provenance_role']))} for doc in row.manifest['documents'] if doc['provenance_role']=='document']
             if any(doc['support']=='adapter_unavailable' for doc in formats):
                 pending['blockers'].append('adapter_unavailable')
-            return {**accounting,**(inspection.result if inspection else pending),'formats':formats}
+            issues=row.manifest.get('issues',[])
+            result=inspection.result if inspection else pending
+            if not formats:
+                result={**pending,'inspection_status':'inspected','page_count':0,'token_count':0,'token_upper_bound':0,'blockers':['no_available_documents']}
+            warnings=list(result.get('warnings',[]))
+            if issues and 'archive_files_skipped' not in warnings:warnings.append('archive_files_skipped')
+            return {**accounting,**result,'warnings':warnings,'formats':formats,'issues':issues}
 
     def _document_metadata(self,db,repo,project,package,document):
         nested_package(repo,project,package)

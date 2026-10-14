@@ -15,7 +15,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py")
+CODE_FILES = ("__init__.py", "entrypoint.py", "readers.py", "schemas.py", "images.py", "toolchain.py", "bootstrap.py", "archives.py", "archive_entrypoint.py")
 MAX_CODE_BYTES = 262_144
 
 
@@ -36,10 +36,10 @@ def stage_payload(source=None):
 
 LINUX_STAGE = r'''
 import base64,hashlib,json,os,pathlib,stat,sys,tempfile,uuid
-names={'__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py'}
+names={'__init__.py','entrypoint.py','readers.py','schemas.py','images.py','toolchain.py','bootstrap.py','archives.py','archive_entrypoint.py'}
 if os.getuid()==0: raise RuntimeError('Use the dedicated non-root development user')
-raw=sys.stdin.buffer.read(3000001)
-if len(raw)>3000000: raise ValueError('Staging protocol limit')
+raw=sys.stdin.buffer.read(4000001)
+if len(raw)>4000000: raise ValueError('Staging protocol limit')
 request=json.loads(raw)
 if set(request)!= {'files','code_hash'} or set(request['files'])!=names: raise ValueError('Invalid source set')
 files={name:base64.b64decode(value,validate=True) for name,value in request['files'].items()}

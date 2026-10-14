@@ -245,12 +245,15 @@ To prepare a comparable fresh WSL runtime, install `python3.14-venv` and
 
 ```powershell
 wsl.exe -d Ubuntu -- python3 -m venv /home/acer/.local/share/tender-sverka/document-runtime
-Get-Content scripts/document_runtime_requirements.txt | wsl.exe -d Ubuntu -- /home/acer/.local/share/tender-sverka/document-runtime/bin/python -m pip install -r /dev/stdin
+Get-Content scripts/document_runtime_requirements.txt | wsl.exe -d Ubuntu -- /home/acer/.local/share/tender-sverka/document-runtime/bin/python -m pip install --only-binary=:all: -r /dev/stdin
 python scripts/stage_document_parser.py --distribution Ubuntu
 ```
 
 The staging helper copies only `__init__.py`, `entrypoint.py`, `readers.py`,
-`schemas.py`, `images.py`, `toolchain.py` and the source-only `bootstrap.py`.
+`schemas.py`, `images.py`, `toolchain.py`, the source-only `bootstrap.py`,
+`archives.py` and `archive_entrypoint.py`. The host archive transport is not
+staged. Each pure file is limited to 262,144 bytes and the complete staging
+request to 4,000,000 bytes; this envelope accommodates nine maximum-sized files.
 It preserves exact bytes, computes the same content hash as the
 runner, preserves old code versions and atomically selects the new version.
 It never stages server modules, credentials, configuration or uploaded files.
@@ -307,6 +310,23 @@ committed example keeps it disabled. [OCR configuration and acceptance
 boundaries](image-ocr.md) describe this in detail. `verify --documents` enables
 actual OCR tests only when that explicit mode is configured and does not inherit
 an OCR test opt-in from the caller's environment.
+
+Archive admission uses standard `zipfile`, `rarfile` and `py7zr` adapters with
+timeouts. The local runtime contains the distribution's precompiled UnRAR
+package, extracted under `document-runtime/opt/unrar`; its executable is
+`/runtime/opt/unrar/usr/bin/unrar-nonfree` inside the sandbox. No custom native
+decoder build is required. Install binary wheels and the distribution package;
+do not replace system libraries or compile a diagnostic decoder for this flow.
+
+The independent archive runtime probe does not require OCR. The v4 admission
+policy uses bounded per-container execution and a 64 MiB temporary filesystem.
+Schema-3 manifests retain `ARCHIVE_CORRUPTED` / `UNSUPPORTED_FORMAT` issues;
+publication records them in the database and valid sibling files continue.
+An all-bad package returns `inspection_job_id: null` with preflight blocker
+`no_available_documents`. Historical manifests retain their original schemas.
+[Archive admission and provenance](archive-admission.md) records the exact
+contract, runtime pins and verification state. Native bit-level decoder
+research was stopped at the user's request.
 
 The production deployment must run in Uzbekistan with TLS, restricted roles,
 encrypted data and backups, redundant services, and approved external processor
