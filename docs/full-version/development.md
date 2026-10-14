@@ -108,6 +108,12 @@ The allowlisted real document stages are still being implemented: missing
 handlers fail explicitly and no synthetic deployment handler reports success.
 Tests register separate fixture stages only in the test environment.
 
+The implemented full-version stages are `package.inspect`, `package.normalize`
+and `analysis.extract`; comparison and report stages follow separately. Do not
+start a default dispatcher/worker on the shared verification database: it may
+claim old fixture jobs. Use a separate development database/queue for a live
+workflow; integration tests create their own scoped jobs and isolated queues.
+
 When all encrypted-storage settings are configured, the dispatcher also starts
 an independent bounded upload reconciliation loop. It discovers durable upload
 attempts, verifies that their objects have no committed document references and
@@ -145,6 +151,39 @@ must exactly match the browser origin, including hostname and port. The local
 helper uses only runtime credentials from ignored `infrastructure/.env` and
 does not pass migration/admin credentials into the API process. Production must
 use its own service launcher and HTTPS settings, not this loopback helper.
+
+The helper reads only allowlisted AI fields from ignored `backend/.env`:
+`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `APP_ANALYSIS_PROVIDER`, the optional
+legacy `CODEX_GATEWAY_API_KEY`/`APP_GATEWAY_*`, and explicit `APP_ANALYSIS_*` profile
+fields. It never imports the MVP's `AI_MODE` or legacy provider settings. Process
+environment and explicit infrastructure settings take precedence. The API and
+worker use the same provider/profile configuration; no key is sent to the browser.
+
+The current default is direct Anthropic Messages with
+`APP_ANALYSIS_PROVIDER=anthropic`, `ANTHROPIC_MODEL=claude-haiku-5-5` and
+`ANTHROPIC_API_KEY`. The SDK sends requests only to the official
+`https://api.anthropic.com` origin; see the [Messages API](https://platform.claude.com/docs/en/api/messages/create).
+AgentRouter is an explicit alternate configuration with
+`APP_ANALYSIS_PROVIDER=agentrouter`, `APP_GATEWAY_API_STYLE=chat` and
+`APP_GATEWAY_API_BASE=https://agentrouter.org/v1`; there is no automatic failover. See
+`backend/.env.full.example` for context/output/timeout/attempt settings. Prices
+remain unset until verified; preflight then reports unknown monetary cost and
+uses request/token limits. An administrator grants versioned external-AI
+permission with a reason inside the organization. Authentication failure from
+either provider does not switch to another provider or a demo adapter. Update
+keys locally and restart affected API/worker processes. A provider change
+requires a new analysis so its frozen provider/model identity stays truthful.
+The current direct Claude key and model passed a real synthetic extraction.
+
+The checklist editor saves a reason and expected revision with edits; approved
+versions are immutable and fork into a new draft. Reports use
+`GET .../checklists/{id}/report.pdf|xlsx|json?revision={saved_revision}`.
+Mismatched revisions return 409; viewers can export but cannot edit. These are
+basic **checklist** reports with sources and audit summaries, not the future
+comparison/matrix report family. PDF needs an installed Unicode TrueType font:
+DejaVu Sans on Linux or Arial on Windows, or `APP_REPORT_FONT_PATH` explicitly.
+Sources and spreadsheet text retain exact characters; string cells never become
+executable formulas. UI report links disappear while edits are unsaved.
 All supported Uvicorn launches must use `--no-proxy-headers`: a default Uvicorn
 launch trusts loopback forwarded headers and would undermine the IP login quota.
 With the Next.js proxy, the default IP quota conservatively applies to the proxy's

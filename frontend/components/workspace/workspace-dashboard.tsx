@@ -9,6 +9,7 @@ import { WorkspaceApiError, type WorkspaceApi } from "@/lib/workspace-api";
 import type { Organization, Project, WorkspaceSession } from "@/lib/workspace-types";
 import { ProjectForm } from "./project-form";
 import { useProjectWorkspace } from "./use-project-workspace";
+import { ProjectDocuments } from "./project-documents";
 
 const roleLabels = { admin: "Администратор", specialist: "Специалист", viewer: "Просмотр" };
 const date = (value: string) => new Intl.DateTimeFormat("ru", { timeZone: "Asia/Tashkent", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -30,7 +31,7 @@ export function WorkspaceDashboard({ api, session, onExpired, onOrganizations }:
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setSelected(null); setNewProject(false); }, [orgId]);
-  function chooseOrganization(id: string) { invalidate(); setOrgId(id); }
+  function chooseOrganization(id: string) { invalidate(); setSelected(null); setNewProject(false); setOrgId(id); }
   const filtered = projects.filter(project => (mode === "all" || project.mode === mode) && `${project.lot_name} ${project.customer || ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 
   async function createOrganization(event: React.FormEvent<HTMLFormElement>) {
@@ -59,6 +60,6 @@ export function WorkspaceDashboard({ api, session, onExpired, onOrganizations }:
       const project = await createProject(input);
       if (project) { setNewProject(false); setSelected(project); }
     }} /></SheetContent></Sheet>
-    <Sheet open={!!selected} onOpenChange={open => { if (!open) setSelected(null); }}><SheetContent closeLabel="Закрыть проект"><SheetTitle className="pr-8 text-2xl font-semibold leading-8">{selected?.lot_name}</SheetTitle><SheetDescription className="mt-3 text-sm text-[#56645b]">{selected?.customer || "Заказчик не указан"}</SheetDescription>{selected && <dl className="mt-8 space-y-6"><div><dt className="text-xs text-[#56645b]">Сценарий</dt><dd className="mt-2 flex items-center gap-2 text-sm font-medium"><Users className="size-4 text-primary" />{selected.mode === "buyer" ? "Сравнение до 5 участников" : "Проверка одной заявки"}</dd></div><div><dt className="text-xs text-[#56645b]">Окончание приёма заявок, Ташкент</dt><dd className="mt-2 text-sm font-medium">{selected.deadline ? date(selected.deadline) : "Не указан"}</dd></div><div><dt className="text-xs text-[#56645b]">Язык отчёта</dt><dd className="mt-2 text-sm font-medium">{{ ru: "Русский", uz: "O‘zbekcha", en: "English" }[selected.report_language]}</dd></div><div><dt className="text-xs text-[#56645b]">Создан</dt><dd className="mt-2 text-sm font-medium">{date(selected.created_at)}</dd></div></dl>}</SheetContent></Sheet>
+    <Sheet open={!!selected} onOpenChange={open => { if (!open) setSelected(null); }}><SheetContent closeLabel="Закрыть проект" className="max-w-5xl"><SheetTitle className="pr-8 text-2xl font-semibold leading-8">{selected?.lot_name}</SheetTitle><SheetDescription className="mt-3 text-sm text-[#56645b]">{selected?.customer || "Заказчик не указан"}</SheetDescription>{selected && <><dl className="mt-7 grid grid-cols-2 gap-5 rounded-xl bg-muted/40 p-5"><div><dt className="text-xs text-[#56645b]">Сценарий</dt><dd className="mt-2 flex items-center gap-2 text-sm font-medium"><Users className="size-4 shrink-0 text-primary" />{selected.mode === "buyer" ? "Сравнение до 5 участников" : "Проверка одной заявки"}</dd></div><div><dt className="text-xs text-[#56645b]">Окончание приёма заявок, Ташкент</dt><dd className="mt-2 text-sm font-medium">{selected.deadline ? date(selected.deadline) : "Не указан"}</dd></div><div><dt className="text-xs text-[#56645b]">Язык отчёта</dt><dd className="mt-2 text-sm font-medium">{{ ru: "Русский", uz: "O‘zbekcha", en: "English" }[selected.report_language]}</dd></div><div><dt className="text-xs text-[#56645b]">Создан</dt><dd className="mt-2 text-sm font-medium">{date(selected.created_at)}</dd></div></dl><ProjectDocuments key={`${session.user.id}:${orgId}:${selected.id}`} api={api} organizationId={orgId} project={selected} canEdit={canEdit} canAdmin={organization?.role === "admin"} onExpired={onExpired} /></>}</SheetContent></Sheet>
   </main>;
 }

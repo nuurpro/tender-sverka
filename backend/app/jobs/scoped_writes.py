@@ -6,13 +6,13 @@ from uuid import uuid4
 from sqlalchemy import event, select
 
 from app.workspace.models import (Project, Participant, PackageRevision, Document,
-    ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt, utcnow)
+    ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt, AnalysisRun, AnalysisCall, ParticipantFact, utcnow)
 from app.workspace.repository import ValidationError, canonical_json, uuid_string
 
-DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt}
-DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt)
+DOMAIN_MODELS = {Project, Participant, PackageRevision, Document, ChecklistVersion, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt, AnalysisRun, AnalysisCall, ParticipantFact}
+DOMAIN_ORDER = (Project, Participant, PackageRevision, ChecklistVersion, Document, Requirement, ComparisonRun, PackageInspection, NormalizedArtifact, ArtifactUploadAttempt, AnalysisRun, AnalysisCall, ParticipantFact)
 IDENTITY_FIELDS = {"id", "organization_id", "project_id", "package_id", "checklist_id",
-                   "package_ids", "participant_id", "parent_version_id", "job_id", "document_id", "attempt_id", "artifact_id", "actor_id"}
+                   "package_ids", "participant_id", "parent_version_id", "job_id", "document_id", "attempt_id", "artifact_id", "actor_id", "run_id", "logical_id"}
 
 
 class ScopeViolation(ValidationError):
@@ -88,6 +88,21 @@ class FencedWrites:
                 self._require_parent(PackageRevision, package_id)
         if model is PackageInspection:
             self._require_parent(PackageRevision,row.package_id)
+        if model in {AnalysisRun, AnalysisCall}:
+            if self.__job is None or row.job_id != self.__job:
+                raise ScopeViolation()
+            if model is AnalysisRun:
+                self._require_parent(PackageRevision, row.package_id)
+                if row.checklist_id: self._require_parent(ChecklistVersion, row.checklist_id)
+                if row.participant_id: self._require_parent(Participant, row.participant_id)
+            else: self._require_parent(AnalysisRun, row.run_id)
+        if model is ParticipantFact:
+            self._require_parent(Participant, row.participant_id)
+            self._require_parent(AnalysisRun, row.run_id)
+            with self.__session.no_autoflush:
+                run=self.__session.scalar(self._query(AnalysisRun).where(AnalysisRun.id==row.run_id))
+            if self.__job is None or run is None or run.job_id!=self.__job or run.participant_id!=row.participant_id:
+                raise ScopeViolation()
         if model in {NormalizedArtifact, ArtifactUploadAttempt}:
             if self.__job is None or row.job_id != self.__job:
                 raise ScopeViolation()
@@ -172,6 +187,8 @@ class FencedWrites:
 
     def _validate_pending(self, session, *args):
         for row in session.new | session.dirty | session.deleted:
+            if row is getattr(self, "_FencedWrites__audit", None):
+                continue
             self._check_scope(row)
 
     def flush(self):
@@ -180,6 +197,12 @@ class FencedWrites:
             self._check_scope(clone)
             values = self._values(clone)
             if any(values.get(field) != original.get(field) for field in IDENTITY_FIELDS if field in values):
+                raise ScopeViolation()
+            if type(clone) is AnalysisRun and real is not None:
+                immutable=set(values)-{'status','result'}
+                if any(values[field]!=original[field] for field in immutable):raise ScopeViolation()
+                if original['status']=='published' and values!=original:raise ScopeViolation()
+            if type(clone) is ParticipantFact and real is not None and values!=original:
                 raise ScopeViolation()
         # No ORM relationships expose live sessions to callbacks. Flush explicit
         # ancestry tiers instead, while retaining one enclosing fenced transaction.
@@ -216,6 +239,40 @@ class FencedWrites:
             for name, value in values.items():
                 setattr(clone, name, copy.deepcopy(value))
             entry[2] = values
+
+    def audit_analysis_publication(self, row):
+        # One narrow domain operation; callbacks cannot choose actors or entities.
+        from app.workspace.models import Job, AuditEvent
+        self._check_scope(row)
+        if type(row) is not AnalysisRun or row.job_id != self.__job or row.status != 'published':
+            raise ScopeViolation()
+        job=self.__session.scalar(select(Job).where(Job.organization_id==self.__organization,Job.id==self.__job,Job.project_id==self.__project))
+        if job is None or job.payload.get('actor_id') != row.actor_id:
+            raise ScopeViolation()
+        cache=row.result.get('cache')
+        if cache is not None:
+            from app.workspace.models import Organization,OrganizationAIPolicy
+            from app.documents.service import digest
+            self.__session.scalar(select(Organization).where(Organization.id==self.__organization).with_for_update())
+            policy=self.__session.scalar(select(OrganizationAIPolicy).where(OrganizationAIPolicy.organization_id==self.__organization)
+                .order_by(OrganizationAIPolicy.version.desc()).limit(1))
+            source=self.__session.scalar(self._query(AnalysisRun).where(AnalysisRun.id==cache.get('source_run_id')))
+            if source is None or source.status!='published' or source.cache_key!=row.cache_key or source.policy_version!=row.policy_version:
+                raise ScopeViolation()
+            if policy is None or not policy.allowed or policy.version!=row.policy_version:
+                raise ScopeViolation()
+            expected={'source_run_id':source.id,'source_job_id':source.job_id,'source_result_hash':digest(source.result),
+                'frozen_identity':digest(row.frozen),'policy_version':row.policy_version}
+            if canonical_json(cache)!=canonical_json(expected) or canonical_json(source.frozen)!=canonical_json(row.frozen):
+                raise ScopeViolation()
+        audit=AuditEvent(organization_id=self.__organization,project_id=self.__project,actor_id=row.actor_id,
+            action='analysis.published',entity_type='analysis_runs',entity_id=row.id,
+            before={'status':'draft'},after={'status':'published','checklist_id':row.checklist_id,
+                'requirement_ids':row.result.get('published_requirement_ids',[]),'fact_ids':row.result.get('published_fact_ids',[]),
+                'cache':copy.deepcopy(cache)})
+        # Pending validation accepts only this specific, internally-created audit.
+        self.__audit = audit
+        self.__session.add(audit)
 
     def execute(self, *args, **kwargs):
         raise ScopeViolation()

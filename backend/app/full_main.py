@@ -76,6 +76,8 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     app.include_router(auth_router)
     from app.full_workspace.routes import router as workspace_router
     app.include_router(workspace_router)
+    from app.reports import router as reports_router
+    app.include_router(reports_router)
     from app.jobs.routes import router as jobs_router
     app.include_router(jobs_router)
     from app.packages.routes import router as packages_router
@@ -85,6 +87,8 @@ def create_app(settings=None, *, engine=None, sms_sender: SmsSenderProtocol | No
     from app.documents.routes import router as documents_router
     from app.documents.runner import DocumentRunnerError
     app.include_router(documents_router)
+    from app.analysis.routes import router as analysis_router
+    app.include_router(analysis_router)
     @app.exception_handler(DocumentRunnerError)
     async def document_runner_error(request, exc):
         return JSONResponse(status_code=503,content={'detail':'Изолированный обработчик документов недоступен.'})

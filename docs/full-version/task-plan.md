@@ -5,6 +5,30 @@ acceptance gates remain the definition of completion. Each implementation task
 uses behavior tests first, independent specification review, then quality review.
 This document records dependencies, not a reduction of scope.
 
+## Current delivery closed — 15 October 2026
+
+The user replaced the active delivery objective: use direct Anthropic with
+`ANTHROPIC_API_KEY` and `claude-haiku-5-5`, finish basic editor/report integration
+checks, update the ledger and finalize this delivery. Further parser/memory
+optimization is stopped. The numbered full-version roadmap below remains the
+backlog; closing this delivery does not claim all F01–F50 features are complete.
+
+- [x] Direct Anthropic Messages SDK, strict local JSON/schema validation,
+  private environment handoff and no automatic provider fallback.
+- [x] Real Claude connectivity and grounded synthetic extraction verified.
+- [x] Checklist editor: reasoned edits, optimistic conflicts, add/delete,
+  approval, immutable versions/fork, viewer read/export and saved-revision links.
+- [x] Basic checklist PDF/XLSX/JSON reports with original evidence, revision
+  checks, matching snapshot identity, journal summaries and literal XLSX strings.
+- [x] Unit/API/DOM integration, optimized frontend build, actual PostgreSQL/S3/
+  runner/durable tests and live upload → Claude → edit → approve → export check.
+- [x] Browser editor flow and rendered PDF inspected; implementation ledger and
+  installation configuration updated.
+
+Comparison/matrix/scoring, full report families and the remaining PRD features
+are explicitly pending in `implementation-status.md`; they were not substituted
+with fabricated demo outputs during this delivery.
+
 User steering, 14 October 2026: stop native RAR decoder research. Use standard
 archive libraries/tools with timeouts, record `ARCHIVE_CORRUPTED` or
 `UNSUPPORTED_FORMAT` in the database, skip failed files and continue valid ones.

@@ -303,3 +303,24 @@ def test_runtime_launch_strips_actual_ocr_test_opt_in_but_keeps_explicit_runtime
     test_setting_removed = "WORKSPACE_TEST_DOCUMENT_OCR_MODE" not in environment
     assert integration_removed and test_setting_removed
     assert environment["APP_DOCUMENT_OCR_MODE"] == "tesseract"
+
+
+def test_runtime_gateway_handoff_reads_only_allowlisted_fields_and_respects_explicit_values(tmp_path,monkeypatch):
+    module=bootstrap_module();monkeypatch.setattr(module,'ROOT',tmp_path)
+    (tmp_path/'backend').mkdir();(tmp_path/'backend'/'.env').write_text('CODEX_GATEWAY_API_KEY=private-fixture-key\nOPENAI_API_KEY=must-not-inherit\nDATABASE_URL=must-not-inherit\nAPP_GATEWAY_MODEL=fixture-model\n',encoding='utf-8')
+    monkeypatch.delenv('CODEX_GATEWAY_API_KEY',raising=False);monkeypatch.delenv('APP_GATEWAY_MODEL',raising=False)
+    result=module.runtime_environment({'DATABASE_URL':'runtime','APP_SESSION_SECRET':'session'})
+    assert result.get('CODEX_GATEWAY_API_KEY')=='private-fixture-key'
+    assert result.get('APP_GATEWAY_MODEL')=='fixture-model' and result['DATABASE_URL']=='runtime'
+    assert result.get('OPENAI_API_KEY')!='must-not-inherit'
+    result=module.runtime_environment({'DATABASE_URL':'runtime','APP_SESSION_SECRET':'session','CODEX_GATEWAY_API_KEY':'explicit'})
+    assert result['CODEX_GATEWAY_API_KEY']=='explicit'
+
+
+def test_runtime_anthropic_handoff_is_private_and_keeps_explicit_model(tmp_path,monkeypatch):
+    module=bootstrap_module();monkeypatch.setattr(module,'ROOT',tmp_path)
+    (tmp_path/'backend').mkdir();(tmp_path/'backend'/'.env').write_text('ANTHROPIC_API_KEY=private-anthropic-fixture\nANTHROPIC_MODEL=claude-haiku-5-5\nAPP_ANALYSIS_PROVIDER=anthropic\nAI_MODE=demo\n',encoding='utf-8')
+    for key in ('ANTHROPIC_API_KEY','ANTHROPIC_MODEL','APP_ANALYSIS_PROVIDER'):monkeypatch.delenv(key,raising=False)
+    result=module.runtime_environment({'DATABASE_URL':'runtime','APP_SESSION_SECRET':'session'})
+    assert result['ANTHROPIC_API_KEY']=='private-anthropic-fixture' and result['ANTHROPIC_MODEL']=='claude-haiku-5-5'
+    assert result['APP_ANALYSIS_PROVIDER']=='anthropic' and result.get('AI_MODE')!='demo'

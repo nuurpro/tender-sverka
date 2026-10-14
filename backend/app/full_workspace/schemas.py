@@ -1,6 +1,7 @@
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from app.workspace.repository import MAX_CHECKLIST_REQUIREMENTS
 
 from pydantic import AwareDatetime, Field, field_validator, model_validator
 
@@ -75,7 +76,7 @@ class RequirementInput(StrictModel):
 
 
 class ChecklistCreate(StrictModel):
-    requirements: list[RequirementInput] = Field(default_factory=list, max_length=1000)
+    requirements: list[RequirementInput] = Field(default_factory=list, max_length=MAX_CHECKLIST_REQUIREMENTS)
 
     def values(self):
         return [row.model_dump(mode="json", exclude_none=False, exclude={"logical_id"})

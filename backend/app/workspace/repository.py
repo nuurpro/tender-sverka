@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import delete, func, select
 
 from .models import (AuditEvent, ChecklistVersion, Job, OutboxEvent, Participant,
-                     Project, Requirement, utcnow)
+                     Project, Requirement, AnalysisRun, utcnow)
 
 
 class NotFound(Exception):
@@ -30,6 +30,7 @@ class ValidationError(Exception):
 
 REQUIREMENT_FIELDS = ("logical_id", "display_id", "scope", "item", "category", "parameter",
                       "condition", "importance", "predicate", "citations", "origin")
+MAX_CHECKLIST_REQUIREMENTS=2000
 
 
 def canonical_json(value):
@@ -107,6 +108,8 @@ class Repository:
     def _normalize_requirements(self, requirements):
         if not isinstance(requirements, list):
             raise ValidationError("Requirements must be a list")
+        if len(requirements)>MAX_CHECKLIST_REQUIREMENTS:
+            raise ValidationError('Checklist requirement limit exhausted (2000 supported requirements)')
         values = []
         logical_ids, display_ids = set(), set()
         for raw in requirements:
@@ -186,6 +189,35 @@ class Repository:
         if checklist.revision != expected_revision:
             raise Conflict("Checklist revision changed")
 
+    def _validate_document_origins(self, checklist, values):
+        grounded=self._grounded_ancestry(checklist)
+        for value in values:
+            origin=value.get('origin',{})
+            if origin.get('kind')!='document' and value['citations'] and (grounded or origin.get('kind')=='manual'):
+                raise ValidationError('Manual requirements cannot invent document citations')
+            if origin.get('kind') != 'document':
+                continue
+            run=self._get(AnalysisRun,value['origin'].get('analysis_run_id'))
+            binding=run.result.get('requirement_bindings',{}).get(value['logical_id'])
+            if run.project_id!=checklist.project_id or run.status!='published' or not binding or canonical_json(binding)!=canonical_json(value['citations']):
+                raise ValidationError('Document evidence cannot be fabricated or edited')
+            ancestry=checklist
+            while ancestry.id!=run.checklist_id and ancestry.parent_version_id:
+                ancestry=self._get(ChecklistVersion,ancestry.parent_version_id)
+            if ancestry.id!=run.checklist_id:
+                raise ValidationError('Evidence belongs to another checklist')
+
+    def _grounded_ancestry(self,checklist):
+        seen=set();ancestor=checklist
+        while ancestor is not None:
+            if ancestor.id in seen or ancestor.project_id!=checklist.project_id:
+                raise ValidationError('Invalid checklist ancestry')
+            seen.add(ancestor.id)
+            if self.session.scalar(self._query(AnalysisRun).where(AnalysisRun.project_id==checklist.project_id,
+                AnalysisRun.checklist_id==ancestor.id).limit(1)) is not None:return True
+            ancestor=self._get(ChecklistVersion,ancestor.parent_version_id) if ancestor.parent_version_id else None
+        return False
+
     def save_checklist_draft(self, checklist_id, requirements, expected_revision, reason=None):
         checklist = self._locked_checklist(checklist_id)
         self._require_draft_revision(checklist, expected_revision)
@@ -194,6 +226,20 @@ class Repository:
         old = {row.logical_id: {key: copy.deepcopy(getattr(row, key)) for key in REQUIREMENT_FIELDS}
                for row in self.list_requirements(checklist.id)}
         new = {row["logical_id"]: row for row in values}
+        grounded = self._grounded_ancestry(checklist) or any(row.get('origin',{}).get('kind') in {'document','manual'} for row in old.values())
+        if grounded:
+            for value in values:
+                previous=old.get(value['logical_id'])
+                if previous and previous.get('origin',{}).get('kind') in {'document','manual'}:
+                    if canonical_json(value['origin'])!=canonical_json(previous['origin']):
+                        raise ValidationError('Server provenance must be retained')
+                    if previous['origin']['kind']=='manual' and value['citations']:
+                        raise ValidationError('Manual requirements cannot invent document citations')
+                if not previous:
+                    if not isinstance(reason,str) or not reason.strip() or value['citations']:
+                        raise ValidationError('Manual additions need a reason and cannot invent source citations')
+                    value['origin']={'kind':'manual','reason':reason.strip(),'actor_id':self.actor_id}
+            self._validate_document_origins(checklist,values)
         editing = any(key not in new or canonical_json(row) != canonical_json(new[key]) for key, row in old.items())
         if editing and (not isinstance(reason, str) or not reason.strip()):
             raise ValidationError("A reason is required when editing or deleting existing requirements")
@@ -216,6 +262,7 @@ class Repository:
             for field in ("parameter", "condition"):
                 if not getattr(row, field) or not getattr(row, field).strip():
                     raise ValidationError(f"Requirement {row.display_id} needs a nonempty {field} before approval")
+        self._validate_document_origins(checklist,[{key:copy.deepcopy(getattr(row,key)) for key in REQUIREMENT_FIELDS} for row in requirements])
         before = self._checklist_snapshot(checklist)
         checklist.status = "approved"
         checklist.approved_by = self.actor_id

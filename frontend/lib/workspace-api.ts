@@ -1,6 +1,7 @@
-import type { NewProject, Organization, Project, WorkspaceSession } from "./workspace-types";
+import type { NewProject, Organization, Participant, Project, WorkspaceSession } from "./workspace-types";
 import type { PackageDetail, PackagePreflight, PackageSummary, PackageUpload, PackageUploadResult } from "./package-types";
-import type { ArtifactDetail, BoundSourceBlock, NormalizationArtifacts, NormalizationOptions, NormalizationRun, SourceBlocks } from "./document-types";
+import type { ArtifactDetail, BoundSourceBlock, NormalizationArtifacts, NormalizationOptions, NormalizationRun, SourceBlocks, WorkspaceJob } from "./document-types";
+import type { AiPolicy, AiPolicyChange, AnalysisDetail, AnalysisOptions, AnalysisPreflight, AnalysisStart, ChecklistDetail, ChecklistSave, ChecklistSummary } from "./analysis-types";
 
 export class WorkspaceApiError extends Error {
   status: number;
@@ -95,6 +96,15 @@ export class WorkspaceApi {
   private packagePath(organizationId: string, projectId: string) {
     return "/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId) + "/packages";
   }
+  participants(organizationId: string, projectId: string) {
+    return this.request<Participant[]>("/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId) + "/participants");
+  }
+  createParticipant(organizationId: string, projectId: string, name: string, slot: number) {
+    return this.request<Participant>("/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId) + "/participants", "POST", { name, slot });
+  }
+  retryJob(organizationId: string, projectId: string, jobId: string, idempotencyKey: string) {
+    return this.request<WorkspaceJob>("/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId) + "/jobs/" + encodeURIComponent(jobId) + "/retry", "POST", {}, true, idempotencyKey);
+  }
   packages(organizationId: string, projectId: string) {
     return this.request<PackageSummary[]>(this.packagePath(organizationId, projectId));
   }
@@ -136,5 +146,44 @@ export class WorkspaceApi {
   }
   artifactBlock(organizationId: string, projectId: string, packageId: string, artifactId: string, blockId: string) {
     return this.request<BoundSourceBlock>(this.sourcePackagePath(organizationId, projectId, packageId) + "/artifacts/" + encodeURIComponent(artifactId) + "/blocks/" + encodeURIComponent(blockId));
+  }
+  aiPolicy(organizationId: string) {
+    return this.request<AiPolicy>("/organizations/" + encodeURIComponent(organizationId) + "/ai-policy");
+  }
+  setAiPolicy(organizationId: string, input: AiPolicyChange) {
+    return this.request<AiPolicy>("/organizations/" + encodeURIComponent(organizationId) + "/ai-policy", "PUT", input);
+  }
+  analysisPreflight(organizationId: string, projectId: string, packageId: string, options: AnalysisOptions) {
+    return this.request<AnalysisPreflight>(this.sourcePackagePath(organizationId, projectId, packageId) + "/analysis/preflight", "POST", options);
+  }
+  startAnalysis(organizationId: string, projectId: string, packageId: string, options: AnalysisOptions, idempotencyKey: string) {
+    return this.request<AnalysisStart>(this.sourcePackagePath(organizationId, projectId, packageId) + "/analysis", "POST", options, true, idempotencyKey);
+  }
+  analysisRun(organizationId: string, projectId: string, runId: string) {
+    return this.request<AnalysisDetail>(this.projectPath(organizationId, projectId) + "/analysis/" + encodeURIComponent(runId));
+  }
+  analysisRuns(organizationId: string, projectId: string, packageId: string) {
+    return this.request<AnalysisStart[]>(this.sourcePackagePath(organizationId, projectId, packageId) + "/analysis");
+  }
+  private projectPath(organizationId: string, projectId: string) {
+    return "/organizations/" + encodeURIComponent(organizationId) + "/projects/" + encodeURIComponent(projectId);
+  }
+  checklists(organizationId: string, projectId: string) {
+    return this.request<ChecklistSummary[]>(this.projectPath(organizationId, projectId) + "/checklists");
+  }
+  checklist(organizationId: string, projectId: string, checklistId: string) {
+    return this.request<ChecklistDetail>(this.projectPath(organizationId, projectId) + "/checklists/" + encodeURIComponent(checklistId));
+  }
+  saveChecklist(organizationId: string, projectId: string, checklistId: string, input: ChecklistSave) {
+    return this.request<ChecklistDetail>(this.projectPath(organizationId, projectId) + "/checklists/" + encodeURIComponent(checklistId), "PUT", input);
+  }
+  approveChecklist(organizationId: string, projectId: string, checklistId: string, expectedRevision: number) {
+    return this.request<ChecklistDetail>(this.projectPath(organizationId, projectId) + "/checklists/" + encodeURIComponent(checklistId) + "/approve", "POST", { expected_revision: expectedRevision });
+  }
+  forkChecklist(organizationId: string, projectId: string, checklistId: string) {
+    return this.request<ChecklistDetail>(this.projectPath(organizationId, projectId) + "/checklists/" + encodeURIComponent(checklistId) + "/fork", "POST", {});
+  }
+  checklistReportUrl(organizationId: string, projectId: string, checklistId: string, revision: number, format: "pdf" | "xlsx" | "json") {
+    return "/api" + this.projectPath(organizationId, projectId) + "/checklists/" + encodeURIComponent(checklistId) + "/report." + format + "?revision=" + encodeURIComponent(String(revision));
   }
 }

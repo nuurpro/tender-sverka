@@ -5,6 +5,13 @@ connects the existing authenticated package/normalization/job substrate to
 extraction, checklist approval and comparison. The full PRD ledger still applies.
 The user has no expert corpus; synthetic execution checks do not certify quality.
 
+Task 5 now has implemented authenticated policy/preflight/start/history/detail
+routes, frozen evidence, durable call accounting, extraction publication and a
+project-scoped result cache. The 15 October delivery uses direct Anthropic,
+`claude-haiku-5-5`; live extraction and the basic checklist edit/approve/report
+flow passed on synthetic documents. Task 6 comparison and the complete five-bid
+matrix/report acceptance scenario are not complete.
+
 ## Inputs and evidence
 
 Select an explicit package revision and terminal normalization attempt. Use its
@@ -30,12 +37,21 @@ complete inspection and unavailable source regions are different results.
 
 ## Gateway and organization policy
 
-Use the configured AgentRouter gateway through Chat Completions JSON mode and
-local Pydantic validation. Use existing `CODEX_GATEWAY_API_KEY` configuration;
-never switch automatically to official OpenAI or the synthetic provider.
+Use direct Anthropic Messages with `ANTHROPIC_API_KEY` and
+`ANTHROPIC_MODEL=claude-haiku-5-5` by default, as explicitly requested by the user.
+Require JSON matching the schema and validate locally with Pydantic. The frozen
+profile identifies the official API origin and `anthropic-messages-json-v1`.
+The earlier AgentRouter Chat JSON profile remains readable history and is an
+explicit alternate configuration, never automatic failover. Never forward an
+Anthropic key to a gateway or switch silently to another model/provider.
 No document can be transmitted until its organization permits external AI.
 Admins change that versioned policy through the authenticated organization API.
 Check current permission and actor access before each request and publication.
+
+Credentials are loaded only into the backend/worker environment. Existing jobs
+retain their frozen provider; a changed active provider requires a new analysis
+before new network calls. SDK retries are disabled; durable run accounting
+controls bounded retries and includes Anthropic cache input tokens in usage.
 
 Freeze provider URL, model, protocol, prompt/schema versions, context/output
 limits and pricing policy in each analysis job. Credentials remain runtime
@@ -51,6 +67,18 @@ usage stays explicitly unknown; never present a fabricated exact price.
 Chunk whole evidence blocks, splitting oversized blocks with retained source
 offsets; do not silently truncate the package. Cache only inside the authorized
 organization/project with frozen inputs, profile, prompt and schema identities.
+
+The current profile uses `grounded-extraction-v2` and includes the frozen IANA
+timezone in every extraction/reference request. Earlier v1 profiles remain
+parseable history. Cache reuse requires an immutable published result from a
+succeeded run with identical frozen inputs and the same current policy version.
+It decrypts and validates source artifacts and rebinds citations before creating
+fresh checklist/fact IDs; editable checklist contents never supply the cache.
+
+`GET /api/organizations/{org}/projects/{project}/packages/{package}/analysis`
+returns up to 100 runs, newest first, as `{run, job}`. The browser restores this
+history before allowing a new analysis and polls the selected run's detail. A
+failed history read keeps new analysis blocked until a successful reload.
 
 ## Extraction and checklist publication
 

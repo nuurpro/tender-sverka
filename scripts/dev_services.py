@@ -187,8 +187,19 @@ def runtime_environment(values):
     """Share development runtime settings without migration/admin credentials."""
     if not values.get("DATABASE_URL") or not values.get("APP_SESSION_SECRET"):
         raise ValueError("Runtime DATABASE_URL and APP_SESSION_SECRET are required")
-    environment = {**os.environ, **{key: value for key, value in values.items()
-        if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_"))
+    # Legacy development keeps the gateway secret in ignored backend/.env.
+    # Read only explicit full-runtime gateway fields; never import legacy AI
+    # mode/provider fields or database/owner credentials from that file.
+    from dotenv import dotenv_values
+    fields={'ANTHROPIC_API_KEY','ANTHROPIC_MODEL','APP_ANTHROPIC_MODEL','APP_ANALYSIS_PROVIDER',
+        'CODEX_GATEWAY_API_KEY','APP_GATEWAY_API_BASE','APP_GATEWAY_MODEL','APP_GATEWAY_API_STYLE',
+        'APP_ANALYSIS_CONTEXT_TOKENS','APP_ANALYSIS_OUTPUT_TOKENS','APP_ANALYSIS_TIMEOUT_SECONDS',
+        'APP_ANALYSIS_MAX_ATTEMPTS','APP_ANALYSIS_INPUT_PRICE_PER_MILLION','APP_ANALYSIS_OUTPUT_PRICE_PER_MILLION',
+        'APP_ANALYSIS_PRICING_VERSION'}
+    path=ROOT/'backend'/'.env'
+    gateway={key:value for key,value in dotenv_values(path).items() if key in fields and value} if path.is_file() else {}
+    environment = {**gateway, **os.environ, **{key: value for key, value in values.items()
+        if key.startswith(("APP_", "S3_", "CODEX_GATEWAY_")) or key in {'ANTHROPIC_API_KEY','ANTHROPIC_MODEL'}
         or key in {"DATABASE_URL", "CELERY_BROKER_URL", "REDIS_URL", "DOCUMENT_ENCRYPTION_KEY", *DOCUMENT_RUNNER_FIELDS}}}
     for key in ("MIGRATION_DATABASE_URL", "POSTGRES_PASSWORD", "TENDER_APPLICATION_PASSWORD",
                 "WORKSPACE_TEST_DATABASE_URL", "WORKSPACE_TEST_RUNTIME_DATABASE_URL", "WORKSPACE_TEST_BROKER_URL",

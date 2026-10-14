@@ -5,6 +5,52 @@ PRD (draft 0.1, 8 October 2026), plus the agreed five-participant comparison UI.
 The `mvp-baseline` tag preserves the previous application. This ledger records
 evidence, not a smaller definition of completion.
 
+## Current user-directed delivery — closed 15 October 2026
+
+The active objective was changed to direct Anthropic `ANTHROPIC_API_KEY` /
+`claude-haiku-5-5`, basic editor/report integration checks and finalization of
+this delivery. All three actions are verified. Further native-decoder work and
+memory optimization are stopped. The full F01–F50 roadmap remains below as an
+explicit backlog; this closure does not claim the comparison/matrix or all
+production PRD gates are complete.
+
+- Direct Claude connectivity passed (`OK`, 30 input / 4 output tokens), followed
+  by real strict-schema grounded extraction (one requirement, verified quotes,
+  2827 input / 947 output tokens). No AgentRouter/OpenAI/demo fallback was used.
+- A real owned synthetic flow passed on restricted PostgreSQL, encrypted S3
+  and the isolated parser: upload a valid TXT plus corrupt ZIP → skip/log the
+  ZIP → normalize TXT → direct Claude → editable draft → reasoned save → approve
+  → PDF/XLSX/JSON. Live extraction recorded **2837 input / 1010 output tokens**;
+  all three reports used one snapshot ID and matched saved conditions/evidence.
+  Only explicit owned job IDs ran; no shared fixture queue was drained.
+- Basic integration gate: **101 backend tests passed**, one actual-only test
+  skipped in the host gate; **54 actual PostgreSQL/RabbitMQ/S3/runner/fence tests
+  passed**, zero skips. These are targeted gates, not a claim that the earlier
+  551-case full suite was rerun. The existing Starlette warning remains.
+- Frontend: **16 SDK + 38 DOM tests passed**, TypeScript and optimized Next.js
+  build passed. Four editor DOM cases cover reason/predicate edits, conflicts
+  retaining unsaved input, approve/fork immutability and viewer export.
+  Six backend report cases cover PDF/XLSX/JSON content, original evidence,
+  revision conflicts, retained approved versions, nested/viewer scope and exact
+  literal spreadsheet text. No new persistent database migration was needed for
+  the basic reports; analysis migrations 0011/0012 are applied.
+- `gstack /browse` verified the actual built UI: dev mock login, project opening,
+  create draft version, edit/save with reason, approve, immutable fields and
+  revision-bound report links. A complete final chain returned `true` for the
+  approved edited field. An earlier QA command used unsupported CSS `:hidden`;
+  it was corrected to wait for enabled action buttons and rerun successfully.
+  The generated PDF was rendered with Poppler and inspected: Cyrillic, sources,
+  audit text, margins and page footer are readable without clipping.
+- Private keys remain in ignored environment files, never profiles or browser
+  payloads. `ANTHROPIC_API_KEY` is read by the API/worker through the allowlisted
+  runtime handoff. The preserved MVP source/main/tag remain unchanged.
+
+Current deliverables are documented in `task-plan.md`, `analysis-contract.md`
+and `development.md`. Expert extraction quality remains unqualified because the
+user has no labelled real-document corpus. Full comparison/scoring/matrix,
+DOCX/commission reports, remaining conversion/CAD and production integrations
+continue as backlog items rather than fabricated completed features.
+
 ## User-directed archive change — 14 October 2026
 
 The user stopped native decoder builds and RAR4/RAR5 optimization. That work is
@@ -42,7 +88,8 @@ scenario; specialized decoder research is not a prerequisite for it.
   handles Uzbek Cyrillic and mixed languages.
 - PostgreSQL, S3-compatible storage, Celery/RabbitMQ, Redis quotas, pgvector.
   SQLite is permitted as an isolated test backend, never a production fallback.
-- AgentRouter Chat Completions JSON mode remains the default gateway protocol.
+- Direct Anthropic Messages with local JSON validation is the current default;
+  AgentRouter Chat JSON is an explicit alternate, with no automatic failover.
   Model names do not establish available capabilities or access.
 
 ## Requirement traceability
@@ -68,10 +115,10 @@ scenario; specialized decoder research is not a prerequisite for it.
 | F17 | Seals/signatures, QR/barcodes, dates and participant details | Pending |
 | F18 | PDF/image drawings, stamps, labels, dimensions/tolerances and vision | Pending |
 | F19 | DWG/DXF conversion, entities and source anchors | Pending; PRD expansion stage |
-| F20 | Structured product/participant requirements and lot positions | MVP basic requirements only |
-| F21 | Cross-references, duplicates, contradictions and competition concerns | Pending |
-| F22 | Add/edit/delete/merge/group, approve, version diff and retained history | Repository + API draft/replace/approve/fork/history verified; editor/merge/diff pending |
-| F23 | Separately extracted bid facts and evidence/source priorities | Pending |
+| F20 | Structured product/participant requirements and lot positions | Strict grounded extraction/live Claude/checklist publication verified on synthetic sources; real expert quality pending |
+| F21 | Cross-references, duplicates, contradictions and competition concerns | Numbered-section index, conservative dedupe/conflicts/review findings and bounded planning verified; broad real-document quality pending |
+| F22 | Add/edit/delete/merge/group, approve, version diff and retained history | API + basic editor add/edit/delete/approve/fork/history verified; merge/group/diff UI pending |
+| F23 | Separately extracted bid facts and evidence/source priorities | Participant-scoped facts/source kinds and frozen source priorities verified; evaluation and real quality pending |
 | F24 | Internal bid conflicts, validity at tender deadline and model matching | Pending |
 | F25 | Deterministic Decimal numeric/unit/date/set rules | Pending |
 | F26 | Semantic and multilingual comparison, equivalence and review routing | MVP basic LLM comparison only |
@@ -90,9 +137,9 @@ scenario; specialized decoder research is not a prerequisite for it.
 | F39 | Comparison/category charts, history, accessibility and reduced motion | Pending |
 | F40 | RU/UZ/EN interface and selected report language; original quotes retained | MVP Russian only |
 | F41 | Project chat restricted to authorized versioned uploaded sources | Pending |
-| F42 | Snapshot-consistent PDF, XLSX, DOCX and JSON/API exports | MVP XLSX only |
-| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Frozen native/OCR profiles, scoped parser reuse and current-original binding verified; extraction/comparison caches pending |
-| F44 | Gateway capability profiles, budgets, bounded failure recovery | MVP chat/responses adapter only |
+| F42 | Snapshot-consistent PDF, XLSX, DOCX and JSON/API exports | Basic checklist PDF/XLSX/JSON exports, revision/source/audit agreement verified; comparison and DOCX report families pending |
+| F43 | Content-addressed tenant-isolated parser/extraction/comparison caches | Parser and immutable same-project extraction reuse verified with citation revalidation; comparison cache pending |
+| F44 | Gateway capability profiles, budgets, bounded failure recovery | Direct Anthropic Messages/strict JSON/live Haiku, explicit profiles and budget/retry tests verified; model capability catalogue pending |
 | F45 | Reproducibility via snapshots/cache and explicit new evaluation runs | Native/OCR code/assets/runtime/policy/options snapshots, source-only execution and explicit reprocessing verified; extraction/comparison snapshots pending |
 | F46 | TLS, AES-256 at rest, retention (12 months), deletion incl. derived data | AES-256 authenticated originals/normalized artifacts verified; further derivatives/DB volumes/TLS/rotation/retention/deletion pending |
 | F47 | TenderZone/TenderGPT lot/SSO/commission integrations | Pending; external contracts required |

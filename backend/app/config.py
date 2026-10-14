@@ -37,7 +37,17 @@ class Settings(BaseSettings):
     gateway_api_key: SecretStr = Field(default="", validation_alias=AliasChoices("CODEX_GATEWAY_API_KEY", "gateway_api_key"))
     gateway_api_style: Literal["chat", "responses"] = "chat"
     gateway_model: str = "deepseek-v4-flash"
+    analysis_provider: Literal['anthropic','agentrouter'] = 'anthropic'
+    anthropic_api_key: SecretStr = Field(default='',validation_alias=AliasChoices('ANTHROPIC_API_KEY','anthropic_api_key'))
+    anthropic_model: str = Field(default='claude-haiku-5-5',validation_alias=AliasChoices('ANTHROPIC_MODEL','APP_ANTHROPIC_MODEL','anthropic_model'))
     external_ai_default_allowed: Literal[False] = False
+    analysis_context_tokens: int = Field(default=32768,ge=2048,le=1000000)
+    analysis_output_tokens: int = Field(default=4096,ge=128,le=32768)
+    analysis_timeout_seconds: float = Field(default=30.,ge=.1,le=120.)
+    analysis_max_attempts: int = Field(default=2,ge=1,le=3)
+    analysis_input_price_per_million: str | None = None
+    analysis_output_price_per_million: str | None = None
+    analysis_pricing_version: str = 'unverified-no-price-v1'
     max_package_files: int = Field(default=20, ge=1, le=20)
     max_package_bytes: int = Field(default=50_000_000, ge=1, le=50_000_000)
     max_package_pages: int = Field(default=1000, ge=1, le=1000)

@@ -421,3 +421,65 @@ class AuditEvent(Tenant, Base):
     before: Mapped[dict | None] = mapped_column(JSON_VALUE)
     after: Mapped[dict | None] = mapped_column(JSON_VALUE)
     reason: Mapped[str | None] = mapped_column(Text)
+
+class OrganizationAIPolicy(Tenant, Base):
+    __tablename__ = 'organization_ai_policies'
+    __table_args__ = tenant_keys(UniqueConstraint('organization_id','version'),CheckConstraint('version >= 1'))
+    version: Mapped[int] = mapped_column(Integer)
+    allowed: Mapped[bool] = mapped_column(Boolean,default=False)
+    actor_id: Mapped[str] = mapped_column(String(36),ForeignKey('users.id'))
+    reason: Mapped[str] = mapped_column(Text)
+
+
+class AnalysisRun(Tenant, Base):
+    __tablename__ = 'analysis_runs'
+    __table_args__ = tenant_keys(project_fk(),job_fk(),
+        UniqueConstraint('organization_id','project_id','id'),UniqueConstraint('organization_id','job_id'),
+        ForeignKeyConstraint(['organization_id','project_id','package_id'],['package_revisions.organization_id','package_revisions.project_id','package_revisions.id']),
+        ForeignKeyConstraint(['organization_id','project_id','checklist_id'],['checklist_versions.organization_id','checklist_versions.project_id','checklist_versions.id']),
+        ForeignKeyConstraint(['organization_id','project_id','participant_id'],['participants.organization_id','participants.project_id','participants.id']),
+        CheckConstraint("status IN ('draft','published')"),CheckConstraint('expected_revision >= 1'))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36))
+    package_id: Mapped[str] = mapped_column(String(36))
+    participant_id: Mapped[str | None] = mapped_column(String(36))
+    checklist_id: Mapped[str | None] = mapped_column(String(36))
+    actor_id: Mapped[str] = mapped_column(String(36),ForeignKey('users.id'))
+    expected_revision: Mapped[int] = mapped_column(Integer,default=1)
+    policy_version: Mapped[int] = mapped_column(Integer)
+    frozen: Mapped[dict] = mapped_column(JSON_VALUE)
+    cache_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16),default='draft')
+    result: Mapped[dict] = mapped_column(JSON_VALUE,default=dict)
+
+
+class AnalysisCall(Tenant, Base):
+    __tablename__ = 'analysis_calls'
+    __table_args__ = tenant_keys(project_fk(),job_fk(),
+        ForeignKeyConstraint(['organization_id','project_id','run_id'],['analysis_runs.organization_id','analysis_runs.project_id','analysis_runs.id']),
+        UniqueConstraint('organization_id','run_id','sequence'),CheckConstraint('sequence >= 1 AND input_upper >= 0 AND output_upper >= 0'))
+    project_id: Mapped[str] = mapped_column(String(36))
+    job_id: Mapped[str] = mapped_column(String(36))
+    run_id: Mapped[str] = mapped_column(String(36))
+    sequence: Mapped[int] = mapped_column(Integer)
+    chunk: Mapped[str] = mapped_column(String(64))
+    input_upper: Mapped[int] = mapped_column(Integer)
+    output_upper: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16),default='reserved')
+    usage: Mapped[dict | None] = mapped_column(JSON_VALUE)
+    cost_upper: Mapped[str | None] = mapped_column(String(64))
+    cost_actual: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+
+
+class ParticipantFact(Tenant, Base):
+    __tablename__ = 'participant_facts'
+    __table_args__ = tenant_keys(project_fk(),
+        ForeignKeyConstraint(['organization_id','project_id','participant_id'],['participants.organization_id','participants.project_id','participants.id']),
+        ForeignKeyConstraint(['organization_id','project_id','run_id'],['analysis_runs.organization_id','analysis_runs.project_id','analysis_runs.id']),
+        UniqueConstraint('organization_id','run_id','logical_id'))
+    project_id: Mapped[str] = mapped_column(String(36))
+    participant_id: Mapped[str] = mapped_column(String(36))
+    run_id: Mapped[str] = mapped_column(String(36))
+    logical_id: Mapped[str] = mapped_column(String(36))
+    data: Mapped[dict] = mapped_column(JSON_VALUE)

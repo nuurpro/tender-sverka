@@ -4,6 +4,21 @@ import test from "node:test";
 const session = { user: { id: "user-1", phone: "+998901234567", display_name: null }, csrf_token: "package-csrf", organizations: [] };
 const respond = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 
+test("participant creation and job retry preserve project scope and authenticated action identity", async () => {
+  const { WorkspaceApi } = await import("../lib/workspace-api.ts");
+  const calls = [];
+  const api = new WorkspaceApi(async (url, init) => { calls.push({ url, init }); return respond(url.endsWith("/session") ? session : {}); });
+  await api.session();
+  await api.participants("org-a", "project-a");
+  await api.createParticipant("org-a", "project-a", "Участник", 5);
+  await api.retryJob("org-a", "project-a", "job-a", "same-retry-key");
+  assert.equal(calls[1].url, "/api/organizations/org-a/projects/project-a/participants");
+  assert.deepEqual(JSON.parse(calls[2].init.body), { name: "Участник", slot: 5 });
+  assert.equal(calls[3].url, "/api/organizations/org-a/projects/project-a/jobs/job-a/retry");
+  assert.equal(new Headers(calls[3].init.headers).get("Idempotency-Key"), "same-retry-key");
+  assert.equal(new Headers(calls[3].init.headers).get("X-CSRF-Token"), session.csrf_token);
+});
+
 test("package uploads retain actual files, folder paths and authenticated multipart headers across retry", async () => {
   const { WorkspaceApi } = await import("../lib/workspace-api.ts");
   const calls = [];

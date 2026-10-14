@@ -1,4 +1,5 @@
 export type Role = "admin" | "specialist" | "viewer";
+export type Participant = { id: string; organization_id: string; project_id: string; name: string; slot: number; created_at: string };
 export type Organization = { id: string; name: string; role: Role };
 export type WorkspaceSession = {
   user: { id: string; phone: string | null; display_name: string | null };

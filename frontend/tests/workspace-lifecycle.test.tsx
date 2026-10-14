@@ -96,3 +96,34 @@ test("Strict Mode mount replay keeps a valid workspace session", async () => {
   assert.equal(screen.queryByRole("heading", { name: "Вход в рабочую область" }), null);
   assert.equal(sessionReads, 1);
 });
+
+test("opening a project displays its scoped documents workspace", async () => {
+  const paths: string[] = [];
+  transport(async path => {
+    paths.push(path);
+    return json(path === "/api/organizations/org-a/projects" ? [project] : []);
+  });
+  render(<WorkspaceRoot />);
+  fireEvent.click(await screen.findByRole("button", { name: /Поздний проект А/ }));
+  assert.ok(await screen.findByRole("region", { name: "Документы проекта" }));
+  await waitFor(() => assert.ok(paths.includes("/api/organizations/org-a/projects/project-a/packages")));
+  assert.ok(paths.includes("/api/organizations/org-a/projects/project-a/participants"));
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть проект" }));
+  assert.equal(screen.queryByRole("region", { name: "Документы проекта" }), null);
+});
+
+test("the workspace administrator can grant AI policy from processed project documents", async () => {
+  const packet = { id: "package-a", project_id: project.id, kind: "tender", participant_id: null, version: 1, status: "uploaded", created_at: project.created_at, documents: [] };
+  transport(async path => {
+    if (path === "/api/organizations/org-a/projects") return json([project]);
+    if (path.endsWith("/packages")) return json([packet]);
+    if (path.endsWith("/packages/package-a")) return json(packet);
+    if (path.endsWith("/preflight")) return json({ logical_files: 1, logical_bytes: 10, page_count: 1, token_upper_bound: 10, issues: [], inspection_status: "inspected" });
+    if (path.endsWith("/normalizations")) return json([{ profile_hash: "p", analysis_allowed: false, job: { id: "job-a", project_id: project.id, stage: "package.normalize", status: "succeeded", progress: 100, attempt: 1, error: null, event_sequence: 1 } }]);
+    if (path.endsWith("/ai-policy")) return json({ allowed: false, version: 0 });
+    return json([]);
+  });
+  render(<WorkspaceRoot />);
+  fireEvent.click(await screen.findByRole("button", { name: /Поздний проект А/ }));
+  assert.ok(await screen.findByRole("button", { name: "Разрешить передачу документов" }));
+});
